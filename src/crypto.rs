@@ -58,8 +58,8 @@ pub fn base_point(x: &Scalar) -> RistrettoPoint {
 /// Un chiffré ElGamal haché : (R, masque).
 #[derive(Clone, Debug)]
 pub struct ElGamalCiphertext {
-    pub r_point: RistrettoPoint,
-    pub masked: [u8; 32],
+    pub r_point: RistrettoPoint,    //r_point = R = r·G
+    pub masked: [u8; 32],         //le message original XORé avec une clé dérivée de r·pk
 }
 
 /// Dérive une clé symétrique de 32 octets à partir d'un élément de groupe

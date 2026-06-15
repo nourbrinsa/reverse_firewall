@@ -44,68 +44,56 @@ pub struct FirewallSession {
 }
 
 impl Firewall {
-    /// TODO (setup, cf section 3.1 "Setup") :
-    ///   - tirer sk_fw aleatoirement (crypto::random_scalar)
-    ///   - pk_fw = crypto::base_point(&sk_fw)
+    /// Setup (cf section 3.1) : genere la paire de cles ElGamal du firewall.
     pub fn new(pk_server: VerifyingKey, rng: &mut impl RngCore) -> Self {
         let sk_fw = crypto::random_scalar(rng);
         let pk_fw = crypto::base_point(&sk_fw);
-        Firewall {
-            sk_fw,
-            pk_fw,
-            pk_server,
-        }
+        Firewall { sk_fw, pk_fw, pk_server }
     }
 
     /// Traite le message (X, C, e) recu du client.
     ///
     /// Reference : Fig. 3, etape du Firewall apres reception de (X,C,e).
-    ///
-    /// TODO, doit :
-    ///   1. Dechiffrer e avec sk_fw -> c_bytes = crypto::elgamal_decrypt(&self.sk_fw, &msg.enc_c)
-    ///      puis c = Scalar::from_bytes_mod_order(c_bytes)
-    ///   2. Verification de securite (cf section 3.2) :
-    ///        si crypto::base_point(&c) != msg.big_c : abort (le client a triche)
-    ///   3. Tirer alpha1, alpha2 aleatoirement
-    ///   4. Calculer X_tilde = alpha1 * msg.big_x,  C_tilde = alpha2 * msg.big_c
-    ///   5. Chiffrer c_tilde = c * alpha2 pour le firewall :
-    ///        enc_c_tilde = crypto::elgamal_encrypt(&self.pk_fw, &(c*alpha2).to_bytes(), rng)
-    ///   6. Retourner (FirewallToServer { big_x_tilde: X_tilde, big_c_tilde: C_tilde, enc_c_tilde },
-    ///                 FirewallSession { alpha1, alpha2, c, big_x: msg.big_x, big_c: msg.big_c, kcfs: None })
     pub fn process_client_init(
         &self,
         msg: ClientInit,
         rng: &mut impl RngCore,
     ) -> Result<(FirewallToServer, FirewallSession), String> {
-        // 1. Dechiffrer e avec sk_fw
+        // 1. Dechiffrer e pour recuperer c.
         let c_bytes = crypto::elgamal_decrypt(&self.sk_fw, &msg.enc_c);
         let c = Scalar::from_bytes_mod_order(c_bytes);
 
-        // 2. Verification de securite : verifier que g^c == C
+        // 2. Verification de securite (cf section 3.2) : C doit etre
+        //    coherent avec le c dechiffre. Si ce n'est pas le cas, le
+        //    client a triche (ou e est corrompu) -> on abandonne.
         if crypto::base_point(&c) != msg.big_c {
-            return Err("Erreur de verification du client".to_string());
+            return Err("incoherence detectee : g^c != C".to_string());
         }
 
-        // 3. Tirer alpha1, alpha2 aleatoirement
+        // 3. Tirer les facteurs de rerandomisation.
         let alpha1 = crypto::random_scalar(rng);
         let alpha2 = crypto::random_scalar(rng);
 
-        // 4. Calculer X_tilde et C_tilde
+        // 4. Rerandomiser X et C.
+        //    X_tilde = X^alpha1 = alpha1 * X (notation additive)
+        //    C_tilde = C^alpha2 = alpha2 * C
         let big_x_tilde = alpha1 * msg.big_x;
         let big_c_tilde = alpha2 * msg.big_c;
 
-        // 5. Chiffrer c_tilde = c * alpha2
-        let c_tilde_scalar = c * alpha2;
-        let enc_c_tilde = crypto::elgamal_encrypt(&self.pk_fw, &c_tilde_scalar.to_bytes(), rng);
+        // 5. Rechiffrer c * alpha2 pour le firewall (transparence du format,
+        //    cf discussion sur e_tilde).
+        let c_tilde = c * alpha2;
+        let enc_c_tilde = crypto::elgamal_encrypt(&self.pk_fw, &c_tilde.to_bytes(), rng);
 
-        // 6. Construire les reponses
         let fw_to_server = FirewallToServer {
             big_x_tilde,
             big_c_tilde,
             enc_c_tilde,
         };
 
-        let fw_session = FirewallSession {
+        // 6. On garde alpha1, alpha2, c et les X/C originaux pour
+        //    process_server_response.
+        let session = FirewallSession {
             alpha1,
             alpha2,
             c,
@@ -114,53 +102,39 @@ impl Firewall {
             kcfs: None,
         };
 
-        Ok((fw_to_server, fw_session))
+        Ok((fw_to_server, session))
     }
 
     /// Traite la reponse (sigma, Y, D, beta1, beta2) recue du serveur.
     ///
     /// Reference : Fig. 3, etape du Firewall apres reception de la reponse serveur.
-    ///
-    /// TODO, doit :
-    ///   1. Calculer gamma1 = session.alpha1 * msg.beta1,  gamma2 = session.alpha2 * msg.beta2
-    ///   2. Reconstruire le transcript signe : (Y, D, X^gamma1, C^gamma2)
-    ///        ou X = session.big_x (le X *original* du client, pas X_tilde !)
-    ///        et C = session.big_c
-    ///      X^gamma1 et C^gamma2 se calculent par multiplication scalaire d'un point :
-    ///        x_gamma1 = gamma1 * session.big_x
-    ///        c_gamma2 = gamma2 * session.big_c
-    ///   3. Verifier la signature self.pk_server.verify(&transcript_bytes, &msg.signature)
-    ///      Si invalide : abort.
-    ///   4. Calculer kcfs_point = D^(c*gamma2) = (session.c * gamma2) * msg.big_d
-    ///      kcfs = crypto::kdf(&kcfs_point)
-    ///   5. Retourner FirewallToClient { big_y: msg.big_y, big_d: msg.big_d, gamma1, gamma2, signature: msg.signature }
-    ///      et mettre a jour session.kcfs = Some(kcfs)
     pub fn process_server_response(
         &self,
         msg: ServerResponse,
         session: &mut FirewallSession,
     ) -> Result<FirewallToClient, String> {
-        // 1. Calculer gamma1 et gamma2
+        // 1. gamma1 = alpha1 * beta1, gamma2 = alpha2 * beta2
         let gamma1 = session.alpha1 * msg.beta1;
         let gamma2 = session.alpha2 * msg.beta2;
 
-        // 2. Reconstruire le transcript signe
+        // 2. Reconstruire le transcript signe (Y, D, X^gamma1, C^gamma2),
+        //    ou X et C sont les valeurs ORIGINALES du client (pas X_tilde/C_tilde).
+        //    Rappel : X^gamma1 = X_tilde^beta1 (c'est ce que le serveur a
+        //    effectivement signe), donc on peut le recalculer ainsi.
         let x_gamma1 = gamma1 * session.big_x;
         let c_gamma2 = gamma2 * session.big_c;
-        let transcript_bytes = crypto::concat_points(&[&msg.big_y, &msg.big_d, &x_gamma1, &c_gamma2]);
+        let transcript = crypto::concat_points(&[&msg.big_y, &msg.big_d, &x_gamma1, &c_gamma2]);
 
-        // 3. Verifier la signature
+        // 3. Verifier la signature du serveur.
         self.pk_server
-            .verify(&transcript_bytes, &msg.signature)
-            .map_err(|_| "Echec de la verification de la signature serveur".to_string())?;
+            .verify(&transcript, &msg.signature)
+            .map_err(|_| "signature du serveur invalide".to_string())?;
 
-        // 4. Calculer kcfs
+        // 4. Calculer kcfs = D^(c*gamma2).
         let kcfs_point = (session.c * gamma2) * msg.big_d;
-        let kcfs = crypto::kdf(&kcfs_point);
+        session.kcfs = Some(crypto::kdf(&kcfs_point));
 
-        // 5. Mettre a jour la session et retourner le message
-        session.kcfs = Some(kcfs);
-
+        // 5. Transmettre (sigma, Y, D, gamma1, gamma2) au client.
         Ok(FirewallToClient {
             big_y: msg.big_y,
             big_d: msg.big_d,
@@ -174,78 +148,238 @@ impl Firewall {
     ///
     /// Reference : Fig. 4, etape du Firewall.
     ///
-    /// TODO, doit :
-    ///   1. k1 = crypto::h1(&[r, kcfs].concat()), k2 = crypto::h2(&[r, kcfs].concat())
-    ///   2. Verifier que t == crypto::mac(&k2, &[r, s].concat())  (sinon abort)
-    ///   3. Recuperer C = crypto::xor32(&k1, &s_as_32_bytes)
-    ///      -- pour debuter, supposez que s fait exactement 32 octets
-    ///         (un seul bloc de message). Vous generaliserez ensuite a des
-    ///         messages plus longs avec un flux derive de kcfs.
-    ///   4. Tirer r_tilde aleatoirement (32 octets aleatoires, rng.fill_bytes)
-    ///   5. k1_tilde = crypto::h1(&[r_tilde, kcfs].concat()), k2_tilde = crypto::h2(&[r_tilde, kcfs].concat())
-    ///   6. s_tilde = crypto::xor32(&k1_tilde, &C)
-    ///   7. t_tilde = crypto::mac(&k2_tilde, &[r_tilde, s_tilde].concat())
-    ///   8. Retourner RecordMessage { r: r_tilde, s: s_tilde.to_vec(), t: t_tilde }
+    /// NOTE prototype : on suppose ici que `s` fait exactement 32 octets
+    /// (c'est-a-dire que le chiffre AEAD C tient sur un seul "bloc" de 32
+    /// octets cote H1/H2). Pour des messages plus longs, il faudra
+    /// generaliser le XOR avec un flux derive de kcfs (par exemple en
+    /// hachant kcfs||compteur pour chaque bloc de 32 octets).
     pub fn process_record_message(
         &self,
         msg: RecordMessage,
         kcfs: &[u8; 32],
         rng: &mut impl RngCore,
     ) -> Result<RecordMessage, String> {
-        // 1. Calculer k1 et k2
-        let mut input = Vec::new();
-        input.extend_from_slice(&msg.r);
-        input.extend_from_slice(kcfs);
+        // 1. Recalculer k1, k2 a partir de r recu.
+        let k1 = crypto::h1(&[msg.r.as_slice(), kcfs.as_slice()].concat());
+        let k2 = crypto::h2(&[msg.r.as_slice(), kcfs.as_slice()].concat());
 
-        let k1 = crypto::h1(&input);
-        let k2 = crypto::h2(&input);
-
-        // 2. Verifier le MAC
-        let mut mac_input = Vec::new();
-        mac_input.extend_from_slice(&msg.r);
-        mac_input.extend_from_slice(&msg.s);
-
-        if !crypto::mac_verify(&k2, &mac_input, &msg.t) {
-            return Err("Echec de la verification du MAC".to_string());
+        // 2. Verifier le MAC recu.
+        if !crypto::mac_verify(&k2, &[msg.r.as_slice(), msg.s.as_slice()].concat(), &msg.t) {
+            return Err("MAC invalide a la reception".to_string());
         }
 
-        // 3. Recuperer C = k1 XOR s
-        // On suppose que s fait exactement 32 octets
+        // 3. Recuperer C = k1 XOR s (prototype : s fait 32 octets).
         if msg.s.len() != 32 {
-            return Err("Message s doit faire exactement 32 octets".to_string());
+            return Err("taille de s non supportee par ce prototype (attendu : 32 octets)".to_string());
         }
-
         let mut s_bytes = [0u8; 32];
         s_bytes.copy_from_slice(&msg.s);
-        let c = crypto::xor32(&k1, &s_bytes);
+        let big_c = crypto::xor32(&k1, &s_bytes);
 
-        // 4. Tirer r_tilde aleatoirement
+        // 4. Tirer un nouveau nonce r_tilde, frais et aleatoire.
         let mut r_tilde = [0u8; 32];
         rng.fill_bytes(&mut r_tilde);
 
-        // 5. Calculer k1_tilde et k2_tilde
-        let mut input_tilde = Vec::new();
-        input_tilde.extend_from_slice(&r_tilde);
-        input_tilde.extend_from_slice(kcfs);
+        // 5. Recalculer k1_tilde, k2_tilde a partir de r_tilde.
+        let k1_tilde = crypto::h1(&[r_tilde.as_slice(), kcfs.as_slice()].concat());
+        let k2_tilde = crypto::h2(&[r_tilde.as_slice(), kcfs.as_slice()].concat());
 
-        let k1_tilde = crypto::h1(&input_tilde);
-        let k2_tilde = crypto::h2(&input_tilde);
+        // 6. Re-masquer C avec k1_tilde.
+        let s_tilde = crypto::xor32(&k1_tilde, &big_c);
 
-        // 6. Calculer s_tilde = k1_tilde XOR C
-        let s_tilde = crypto::xor32(&k1_tilde, &c);
+        // 7. Recalculer le MAC sur (r_tilde, s_tilde).
+        let t_tilde = crypto::mac(&k2_tilde, &[r_tilde.as_slice(), s_tilde.as_slice()].concat());
 
-        // 7. Calculer t_tilde
-        let mut mac_input_tilde = Vec::new();
-        mac_input_tilde.extend_from_slice(&r_tilde);
-        mac_input_tilde.extend_from_slice(&s_tilde);
-
-        let t_tilde = crypto::mac(&k2_tilde, &mac_input_tilde);
-
-        // 8. Retourner le message rerandomise
+        // 8. Transmettre (r_tilde, s_tilde, t_tilde) au serveur.
         Ok(RecordMessage {
             r: r_tilde,
             s: s_tilde.to_vec(),
             t: t_tilde,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
+    use rand::rngs::OsRng;
+
+    #[test]
+    fn test_process_client_init_honest_client() {
+        let mut rng = OsRng;
+        let server_sk = SigningKey::generate(&mut rng);
+        let firewall = Firewall::new(server_sk.verifying_key(), &mut rng);
+
+        // Simule un client honnete construisant (X, C, e) comme dans
+        // client::Client::init_message.
+        let x = crypto::random_scalar(&mut rng);
+        let c = crypto::random_scalar(&mut rng);
+        let big_x = crypto::base_point(&x);
+        let big_c = crypto::base_point(&c);
+        let enc_c = crypto::elgamal_encrypt(&firewall.pk_fw, &c.to_bytes(), &mut rng);
+
+        let client_init = ClientInit { big_x, big_c, enc_c };
+
+        let (fw_to_server, session) = firewall
+            .process_client_init(client_init, &mut rng)
+            .expect("un client honnete ne doit pas etre rejete");
+
+        // Le firewall a bien retrouve le c original.
+        assert_eq!(session.c, c);
+        assert_eq!(session.big_x, big_x);
+        assert_eq!(session.big_c, big_c);
+
+        // X_tilde et C_tilde sont bien des rerandomisations : on peut les
+        // dechiffrer/verifier en reconstruisant alpha a partir de e_tilde.
+        let c_tilde_bytes = crypto::elgamal_decrypt(&firewall.sk_fw, &fw_to_server.enc_c_tilde);
+        let c_tilde = Scalar::from_bytes_mod_order(c_tilde_bytes);
+        assert_eq!(crypto::base_point(&c_tilde), fw_to_server.big_c_tilde);
+
+        // c_tilde = c * alpha2, donc C_tilde = C^alpha2 -> coherent.
+        assert_eq!(c_tilde, c * session.alpha2);
+        assert_eq!(fw_to_server.big_x_tilde, session.alpha1 * big_x);
+    }
+
+    #[test]
+    fn test_process_client_init_rejects_inconsistent_c() {
+        let mut rng = OsRng;
+        let server_sk = SigningKey::generate(&mut rng);
+        let firewall = Firewall::new(server_sk.verifying_key(), &mut rng);
+
+        // Le client envoie un C qui ne correspond pas au c chiffre dans e.
+        let x = crypto::random_scalar(&mut rng);
+        let c = crypto::random_scalar(&mut rng);
+        let other_c = crypto::random_scalar(&mut rng);
+
+        let big_x = crypto::base_point(&x);
+        let big_c_wrong = crypto::base_point(&other_c); // != g^c
+        let enc_c = crypto::elgamal_encrypt(&firewall.pk_fw, &c.to_bytes(), &mut rng);
+
+        let client_init = ClientInit { big_x, big_c: big_c_wrong, enc_c };
+
+        let result = firewall.process_client_init(client_init, &mut rng);
+        assert!(result.is_err(), "un C incoherent avec e doit etre rejete");
+    }
+
+    /// Test d'integration "a la main" : simule un client et un serveur
+    /// honnetes (sans utiliser client.rs / server.rs, encore en TODO),
+    /// et verifie que les trois parties calculent bien le meme kcs/kcfs.
+    #[test]
+    fn test_full_handshake_through_firewall() {
+        let mut rng = OsRng;
+
+        // --- Setup ---
+        let server_sk = SigningKey::generate(&mut rng);
+        let server_pk = server_sk.verifying_key();
+        let firewall = Firewall::new(server_pk, &mut rng);
+
+        // --- Etape 1 : Client -> Firewall ---
+        let x = crypto::random_scalar(&mut rng);
+        let c = crypto::random_scalar(&mut rng);
+        let big_x = crypto::base_point(&x);
+        let big_c = crypto::base_point(&c);
+        let enc_c = crypto::elgamal_encrypt(&firewall.pk_fw, &c.to_bytes(), &mut rng);
+        let client_init = ClientInit { big_x, big_c, enc_c };
+
+        // --- Etape 2 : Firewall -> Server ---
+        let (fw_to_server, mut session) = firewall
+            .process_client_init(client_init, &mut rng)
+            .expect("client honnete");
+
+        // --- Etape 3 : Server -> Firewall (simule "a la main") ---
+        let y = crypto::random_scalar(&mut rng);
+        let d = crypto::random_scalar(&mut rng);
+        let beta1 = crypto::random_scalar(&mut rng);
+        let beta2 = crypto::random_scalar(&mut rng);
+        let big_y = crypto::base_point(&y);
+        let big_d = crypto::base_point(&d);
+
+        let x_tilde_beta1 = beta1 * fw_to_server.big_x_tilde;
+        let c_tilde_beta2 = beta2 * fw_to_server.big_c_tilde;
+        let transcript = crypto::concat_points(&[&big_y, &big_d, &x_tilde_beta1, &c_tilde_beta2]);
+        let signature = server_sk.sign(&transcript);
+
+        let server_kcs = crypto::kdf(&((y * beta1) * fw_to_server.big_x_tilde));
+        let server_kcfs = crypto::kdf(&((d * beta2) * fw_to_server.big_c_tilde));
+
+        let server_response = ServerResponse { big_y, big_d, beta1, beta2, signature };
+
+        // --- Etape 4 : Firewall -> Client ---
+        let fw_to_client = firewall
+            .process_server_response(server_response, &mut session)
+            .expect("la signature du serveur doit etre valide");
+
+        // kcfs cote firewall == kcfs cote serveur
+        assert_eq!(session.kcfs.expect("kcfs doit etre calcule"), server_kcfs);
+
+        // --- Etape 5 : Client (simule "a la main") ---
+        let x_gamma1 = crypto::base_point(&(x * fw_to_client.gamma1));
+        let c_gamma2 = crypto::base_point(&(c * fw_to_client.gamma2));
+        let client_transcript =
+            crypto::concat_points(&[&fw_to_client.big_y, &fw_to_client.big_d, &x_gamma1, &c_gamma2]);
+        assert!(server_pk.verify(&client_transcript, &fw_to_client.signature).is_ok());
+
+        let client_kcs = crypto::kdf(&((x * fw_to_client.gamma1) * fw_to_client.big_y));
+        let client_kcfs = crypto::kdf(&((c * fw_to_client.gamma2) * fw_to_client.big_d));
+
+        // --- Verifications finales ---
+        assert_eq!(client_kcs, server_kcs, "kcs doit etre identique cote client et serveur");
+        assert_eq!(client_kcfs, server_kcfs, "kcfs doit etre identique cote client et serveur");
+        assert_eq!(client_kcfs, session.kcfs.unwrap(), "kcfs doit etre identique cote firewall");
+    }
+
+    #[test]
+    fn test_process_record_message_rerandomizes() {
+        let mut rng = OsRng;
+        let server_sk = SigningKey::generate(&mut rng);
+        let firewall = Firewall::new(server_sk.verifying_key(), &mut rng);
+
+        let kcfs = [42u8; 32];
+        let plaintext_ciphertext = [7u8; 32]; // "C" du Fig. 4, simplifie a 32 octets
+
+        // Le client construit (r, s, t).
+        let mut r = [0u8; 32];
+        rng.fill_bytes(&mut r);
+        let k1 = crypto::h1(&[r.as_slice(), kcfs.as_slice()].concat());
+        let k2 = crypto::h2(&[r.as_slice(), kcfs.as_slice()].concat());
+        let s = crypto::xor32(&k1, &plaintext_ciphertext);
+        let t = crypto::mac(&k2, &[r.as_slice(), s.as_slice()].concat());
+
+        let msg = RecordMessage { r, s: s.to_vec(), t };
+
+        let out = firewall
+            .process_record_message(msg, &kcfs, &mut rng)
+            .expect("message bien forme, ne doit pas etre rejete");
+
+        // r_tilde doit etre different de r (avec probabilite ecrasante).
+        assert_ne!(out.r, r);
+
+        // Le serveur, avec kcfs, doit retrouver le meme C et un MAC valide.
+        let k1_tilde = crypto::h1(&[out.r.as_slice(), kcfs.as_slice()].concat());
+        let k2_tilde = crypto::h2(&[out.r.as_slice(), kcfs.as_slice()].concat());
+        assert!(crypto::mac_verify(&k2_tilde, &[out.r.as_slice(), out.s.as_slice()].concat(), &out.t));
+
+        let mut s_tilde = [0u8; 32];
+        s_tilde.copy_from_slice(&out.s);
+        let recovered_c = crypto::xor32(&k1_tilde, &s_tilde);
+        assert_eq!(recovered_c, plaintext_ciphertext);
+    }
+
+    #[test]
+    fn test_process_record_message_rejects_bad_mac() {
+        let mut rng = OsRng;
+        let server_sk = SigningKey::generate(&mut rng);
+        let firewall = Firewall::new(server_sk.verifying_key(), &mut rng);
+
+        let kcfs = [1u8; 32];
+        let msg = RecordMessage {
+            r: [0u8; 32],
+            s: vec![0u8; 32],
+            t: [0u8; 32], // MAC clairement invalide
+        };
+
+        let result = firewall.process_record_message(msg, &kcfs, &mut rng);
+        assert!(result.is_err());
     }
 }
