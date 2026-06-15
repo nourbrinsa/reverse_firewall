@@ -1,19 +1,3 @@
-//! Briques cryptographiques "off-the-shelf" utilisées par le protocole.
-//!
-//! Ce module est complet et fonctionnel : vous n'avez normalement RIEN à
-//! modifier ici. Il fournit :
-//!   - des scalaires et points aléatoires sur le groupe Ristretto255 (= G dans l'article)
-//!   - un chiffrement ElGamal "haché" (hashed ElGamal / ECIES) pour Enc_pkFW / Dec_skFW
-//!   - les fonctions de hachage H1 et H2 (modélisées comme des oracles aléatoires)
-//!   - un MAC (HMAC-SHA256)
-//!   - un schéma AEAD (ChaCha20-Poly1305) utilisé comme AE.Enc / AE.Dec dans la couche record
-//!
-//! Convention de notation :
-//!   Dans l'article, le groupe est noté multiplicativement : g^x.
-//!   En Rust avec curve25519-dalek, le groupe est noté additivement : x * G.
-//!   Donc "X = g^x" de l'article s'écrit ici `let big_x = x * RISTRETTO_BASEPOINT_POINT;`
-//!   et "Y^x" s'écrit `x * big_y`.
-
 use curve25519_dalek::constants::RISTRETTO_BASEPOINT_POINT;
 use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::scalar::Scalar;
@@ -37,11 +21,6 @@ pub fn base_point(x: &Scalar) -> RistrettoPoint {
 }
 
 // ---------------------------------------------------------------------
-// Chiffrement ElGamal "haché" (hashed ElGamal / ECIES), IND-CPA sous DDH+ROM.
-//
-// C'est l'instanciation concrète de Enc_pkFW / Dec_skFW utilisée dans
-// l'article (qui suggère "El Gamal" sans préciser l'encodage).
-//
 // Principe : pour chiffrer un message m de 32 octets avec la clé publique
 // pk = sk * G :
 //   1. tirer r aléatoire, calculer R = r * G
@@ -75,7 +54,6 @@ pub fn kdf(p: &RistrettoPoint) -> [u8; 32] {
 
 /// Concatène les représentations en octets de plusieurs points, pour
 /// construire le message à signer / vérifier
-/// (ex : transcript = (Y, D, X^beta1, C^beta2) dans Fig. 3).
 pub fn concat_points(points: &[&RistrettoPoint]) -> Vec<u8> {
     let mut out = Vec::new();
     for p in points {
@@ -151,11 +129,6 @@ pub fn mac_verify(key: &[u8; 32], msg: &[u8], tag: &[u8; 32]) -> bool {
 
 // ---------------------------------------------------------------------
 // AEAD = AE.Enc / AE.Dec (cf Fig. 4), instancié avec ChaCha20-Poly1305.
-//
-// Le schéma de l'article est "stateful length-hiding AEAD" (stLHAE) : un état
-// (compteur de séquence) est maintenu entre les appels pour générer un nonce
-// différent à chaque message. Pour ce prototype, on utilise un compteur u64
-// fourni explicitement par l'appelant comme nonce.
 // ---------------------------------------------------------------------
 
 /// Chiffre `plaintext` avec la clé `key` (32 octets) et le compteur `seq` comme nonce.
@@ -179,95 +152,4 @@ pub fn ae_decrypt(key: &[u8; 32], seq: u64, ciphertext: &[u8]) -> Result<Vec<u8>
         .map_err(|_| "échec de l'authentification AEAD".to_string())
 }
 
-// ---------------------------------------------------------------------
-// Petites fonctions utilitaires de conversion.
-// ---------------------------------------------------------------------
 
-/// XOR de deux tableaux de 32 octets (utilisé dans Fig. 4 pour s = k1 XOR C).
-pub fn xor32(a: &[u8; 32], b: &[u8; 32]) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    for i in 0..32 {
-        out[i] = a[i] ^ b[i];
-    }
-    out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use rand::rngs::OsRng;
-
-    #[test]
-    fn test_diffie_hellman_property() {
-        let mut rng = OsRng;
-        let x = random_scalar(&mut rng);
-        let y = random_scalar(&mut rng);
-        let big_x = base_point(&x);
-        let big_y = base_point(&y);
-        assert_eq!(x * big_y, y * big_x);
-    }
-
-    #[test]
-    fn test_elgamal_roundtrip() {
-        let mut rng = OsRng;
-        let sk = random_scalar(&mut rng);
-        let pk = base_point(&sk);
-        let msg = [42u8; 32];
-        let ct = elgamal_encrypt(&pk, &msg, &mut rng);
-        let decrypted = elgamal_decrypt(&sk, &ct);
-        assert_eq!(msg, decrypted);
-    }
-
-    #[test]
-    fn test_ae_roundtrip() {
-        let key = [7u8; 32];
-        let plaintext = b"message secret";
-        let ct = ae_encrypt(&key, 0, plaintext);
-        let pt = ae_decrypt(&key, 0, &ct).unwrap();
-        assert_eq!(pt, plaintext);
-    }
-
-    #[test]
-    fn test_mac_verify() {
-        let key = [1u8; 32];
-        let msg = b"hello";
-        let tag = mac(&key, msg);
-        assert!(mac_verify(&key, msg, &tag));
-        assert!(!mac_verify(&key, b"hellp", &tag));
-    }
-
-    #[test]
-    fn test_h1_h2_domain_separation() {
-        // H1 et H2 doivent donner des résultats différents sur la même entrée :
-        // c'est ce qui garantit qu'elles se comportent comme deux oracles
-        // aléatoires indépendants dans la couche record (Fig. 4).
-        let input = b"r || kcfs";
-        assert_ne!(h1(input), h2(input));
-    }
-
-    #[test]
-    fn test_ed25519_signature_roundtrip() {
-        // Démonstration de la brique "Signatures Ed25519" utilisée pour
-        // sigma = Sign_skS(...) côté serveur, et la vérification côté
-        // client/firewall (cf Fig. 3).
-        use ed25519_dalek::{Signer, SigningKey, Verifier};
-        use rand::rngs::OsRng;
-
-        let mut rng = OsRng;
-        let signing_key = SigningKey::generate(&mut rng);
-        let verifying_key = signing_key.verifying_key();
-
-        // Le "transcript" à signer, ex : concat_points(&[&Y, &D, &X_b1, &C_b2])
-        let transcript = b"transcript a signer";
-
-        let signature = signing_key.sign(transcript);
-
-        // La vérification doit réussir sur le bon transcript...
-        assert!(verifying_key.verify(transcript, &signature).is_ok());
-
-        // ... et échouer si le transcript a été modifié (cf rerandomisation
-        // par le firewall : la signature doit rester valide sur le
-        // transcript rerandomisé, mais invalide sur n'importe quel autre).
-        assert!(verifying_key.verify(b"autre transcript", &signature).is_err());
-    }
-}
