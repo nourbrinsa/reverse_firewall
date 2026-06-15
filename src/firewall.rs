@@ -48,7 +48,13 @@ impl Firewall {
     ///   - tirer sk_fw aleatoirement (crypto::random_scalar)
     ///   - pk_fw = crypto::base_point(&sk_fw)
     pub fn new(pk_server: VerifyingKey, rng: &mut impl RngCore) -> Self {
-        todo!("Generer (sk_fw, pk_fw)")
+        let sk_fw = crypto::random_scalar(rng);
+        let pk_fw = crypto::base_point(&sk_fw);
+        Firewall {
+            sk_fw,
+            pk_fw,
+            pk_server,
+        }
     }
 
     /// Traite le message (X, C, e) recu du client.
@@ -71,7 +77,44 @@ impl Firewall {
         msg: ClientInit,
         rng: &mut impl RngCore,
     ) -> Result<(FirewallToServer, FirewallSession), String> {
-        todo!("Dechiffrer c, verifier, rerandomiser (alpha1, alpha2), reconstruire e_tilde")
+        // 1. Dechiffrer e avec sk_fw
+        let c_bytes = crypto::elgamal_decrypt(&self.sk_fw, &msg.enc_c);
+        let c = Scalar::from_bytes_mod_order(c_bytes);
+
+        // 2. Verification de securite : verifier que g^c == C
+        if crypto::base_point(&c) != msg.big_c {
+            return Err("Erreur de verification du client".to_string());
+        }
+
+        // 3. Tirer alpha1, alpha2 aleatoirement
+        let alpha1 = crypto::random_scalar(rng);
+        let alpha2 = crypto::random_scalar(rng);
+
+        // 4. Calculer X_tilde et C_tilde
+        let big_x_tilde = alpha1 * msg.big_x;
+        let big_c_tilde = alpha2 * msg.big_c;
+
+        // 5. Chiffrer c_tilde = c * alpha2
+        let c_tilde_scalar = c * alpha2;
+        let enc_c_tilde = crypto::elgamal_encrypt(&self.pk_fw, &c_tilde_scalar.to_bytes(), rng);
+
+        // 6. Construire les reponses
+        let fw_to_server = FirewallToServer {
+            big_x_tilde,
+            big_c_tilde,
+            enc_c_tilde,
+        };
+
+        let fw_session = FirewallSession {
+            alpha1,
+            alpha2,
+            c,
+            big_x: msg.big_x,
+            big_c: msg.big_c,
+            kcfs: None,
+        };
+
+        Ok((fw_to_server, fw_session))
     }
 
     /// Traite la reponse (sigma, Y, D, beta1, beta2) recue du serveur.
@@ -97,7 +140,34 @@ impl Firewall {
         msg: ServerResponse,
         session: &mut FirewallSession,
     ) -> Result<FirewallToClient, String> {
-        todo!("Calculer gamma1, gamma2, verifier sigma, calculer kcfs")
+        // 1. Calculer gamma1 et gamma2
+        let gamma1 = session.alpha1 * msg.beta1;
+        let gamma2 = session.alpha2 * msg.beta2;
+
+        // 2. Reconstruire le transcript signe
+        let x_gamma1 = gamma1 * session.big_x;
+        let c_gamma2 = gamma2 * session.big_c;
+        let transcript_bytes = crypto::concat_points(&[&msg.big_y, &msg.big_d, &x_gamma1, &c_gamma2]);
+
+        // 3. Verifier la signature
+        self.pk_server
+            .verify(&transcript_bytes, &msg.signature)
+            .map_err(|_| "Echec de la verification de la signature serveur".to_string())?;
+
+        // 4. Calculer kcfs
+        let kcfs_point = (session.c * gamma2) * msg.big_d;
+        let kcfs = crypto::kdf(&kcfs_point);
+
+        // 5. Mettre a jour la session et retourner le message
+        session.kcfs = Some(kcfs);
+
+        Ok(FirewallToClient {
+            big_y: msg.big_y,
+            big_d: msg.big_d,
+            gamma1,
+            gamma2,
+            signature: msg.signature,
+        })
     }
 
     /// Traite un message de la couche record envoye par le client : (r, s, t).
@@ -122,6 +192,60 @@ impl Firewall {
         kcfs: &[u8; 32],
         rng: &mut impl RngCore,
     ) -> Result<RecordMessage, String> {
-        todo!("Rerandomiser (r,s,t) -> (r_tilde, s_tilde, t_tilde) en passant par kcfs")
+        // 1. Calculer k1 et k2
+        let mut input = Vec::new();
+        input.extend_from_slice(&msg.r);
+        input.extend_from_slice(kcfs);
+
+        let k1 = crypto::h1(&input);
+        let k2 = crypto::h2(&input);
+
+        // 2. Verifier le MAC
+        let mut mac_input = Vec::new();
+        mac_input.extend_from_slice(&msg.r);
+        mac_input.extend_from_slice(&msg.s);
+
+        if !crypto::mac_verify(&k2, &mac_input, &msg.t) {
+            return Err("Echec de la verification du MAC".to_string());
+        }
+
+        // 3. Recuperer C = k1 XOR s
+        // On suppose que s fait exactement 32 octets
+        if msg.s.len() != 32 {
+            return Err("Message s doit faire exactement 32 octets".to_string());
+        }
+
+        let mut s_bytes = [0u8; 32];
+        s_bytes.copy_from_slice(&msg.s);
+        let c = crypto::xor32(&k1, &s_bytes);
+
+        // 4. Tirer r_tilde aleatoirement
+        let mut r_tilde = [0u8; 32];
+        rng.fill_bytes(&mut r_tilde);
+
+        // 5. Calculer k1_tilde et k2_tilde
+        let mut input_tilde = Vec::new();
+        input_tilde.extend_from_slice(&r_tilde);
+        input_tilde.extend_from_slice(kcfs);
+
+        let k1_tilde = crypto::h1(&input_tilde);
+        let k2_tilde = crypto::h2(&input_tilde);
+
+        // 6. Calculer s_tilde = k1_tilde XOR C
+        let s_tilde = crypto::xor32(&k1_tilde, &c);
+
+        // 7. Calculer t_tilde
+        let mut mac_input_tilde = Vec::new();
+        mac_input_tilde.extend_from_slice(&r_tilde);
+        mac_input_tilde.extend_from_slice(&s_tilde);
+
+        let t_tilde = crypto::mac(&k2_tilde, &mac_input_tilde);
+
+        // 8. Retourner le message rerandomise
+        Ok(RecordMessage {
+            r: r_tilde,
+            s: s_tilde.to_vec(),
+            t: t_tilde,
+        })
     }
 }
