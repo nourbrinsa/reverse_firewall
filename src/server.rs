@@ -123,6 +123,31 @@ impl Server {
     ///   5. M = crypto::ae_decrypt(&self.kcs.unwrap(), seq, &C)?
     ///   6. Retourner M
     pub fn process_record_message(&mut self, msg: RecordMessage, seq: u64) -> Result<Vec<u8>, String> {
-        todo!("Verifier t_tilde, recuperer C, dechiffrer avec kcs")
+        let kcs = self.kcs.unwrap();
+        let kcfs = self.kcfs.unwrap();
+
+        // 1. Concaténer r_tilde à kcfs, dériver k1_tilde et k2_tilde depuis r_tilde et kcfs,
+        let mut r_kcfs = msg.r.to_ved();
+        r_kcfs.extend_from_slice(&kcfs);
+
+        let k1_tilde = crypto::h1(r_kcfs);
+        let k2_tilde = crypto::h1(r_kcfs);
+
+        // 2. Vérifier le MAC (t_tilde == MAC_k2(r_tilde || s_tilde))
+        let mut mac_input = msg.r.to_vec();
+        mac_input.extend_from_slice(&msg.s);
+
+        if !crypto::mac_verify(&k2_tilde, &mac_input, &msg.t) {
+            return Err("MAC Invalide : message rejeté".to_string());
+        }
+
+        // 3. Retrouver C = k1_tilde XOR s_tilde (on suppose que s fait exactement 32 octets)
+        let s32: [u8; 32] = msg.s.as_slice().try_into().map_err(|_| "se ne fait pas 32 octets".to_string())?;
+        let c_bytes = crypto::xor32(&k1_tilde, &s32);
+
+        // 4. Déchiffrer C avec kcs pour obtenir le message en clair M
+        let m = crypto::ae_decrypt(&kcs, seq, &c_bytes)?;
+
+        Ok(m);
     }
 }
