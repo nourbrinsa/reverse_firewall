@@ -1,0 +1,44 @@
+services:
+  client:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile.module
+      args:
+        - APP_NAME=client_bin
+    container_name: reverse-firewall-client-container
+    env_file:
+      - ../.env
+    depends_on:
+      - firewall
+    networks:
+      - reverse-firewall-network
+
+  firewall:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile.module
+      args:
+        - APP_NAME=firewall_bin
+    container_name: reverse-firewall-firewall-container
+    env_file:
+      - ../.env
+    depends_on:
+      - server
+    networks:
+      - reverse-firewall-network
+
+  server:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile.module
+      args:
+        - APP_NAME=server_bin
+    container_name: reverse-firewall-server-container
+    env_file:
+      - ../.env
+    networks:
+      - reverse-firewall-network
+
+networks:
+  reverse-firewall-network:
+    name: reverse-firewall-network

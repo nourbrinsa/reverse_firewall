@@ -1,14 +1,16 @@
 use std::net::TcpListener;
 use rand::rngs::OsRng;
 
-use reverse_firewall::{server, messages, net};
+
+use reverse_firewall::{server, messages, net,config};
 
 fn main() -> std::io::Result<()> {
+    let cfg = config::ServerConfig::from_env();
     let mut rng = OsRng;
     let mut server = server::Server::new(&mut rng);
 
-    let listener = TcpListener::bind("0.0.0.0:9090")?;
-    println!("[Server] en ecoute sur :9090");
+    let listener = TcpListener::bind(&cfg.listen_addr)?;
+    println!("[Server] en ecoute sur {}", cfg.listen_addr);
 
     let (mut stream, addr) = listener.accept()?;
     println!("[Server] connexion depuis {}", addr);

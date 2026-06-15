@@ -1,14 +1,15 @@
 use std::net::{TcpListener, TcpStream};
 use rand::rngs::OsRng;
 
-use reverse_firewall::{firewall, messages, net};
+use reverse_firewall::{firewall, messages, net, config};
 
 fn main() -> std::io::Result<()> {
+    let cfg = config::FirewallConfig::from_env();
     let mut rng = OsRng;
 
     // 1. Se connecter au serveur
-    println!("[Firewall] connexion au serveur sur :9090...");
-    let mut server_stream = TcpStream::connect("127.0.0.1:9090")?;
+    println!("[Firewall] connexion au serveur sur {}...", cfg.server_addr);
+    let mut server_stream = TcpStream::connect(&cfg.server_addr)?;
     println!("[Firewall] connecte au serveur");
 
     let server_hello: messages::ServerHello = net::recv_msg(&mut server_stream)?;
@@ -19,8 +20,8 @@ fn main() -> std::io::Result<()> {
     let fw = firewall::Firewall::new(pk_server, &mut rng);
 
     // 3. Ecouter le client
-    let listener = TcpListener::bind("0.0.0.0:8080")?;
-    println!("[Firewall] en ecoute sur :8080 pour le client");
+    let listener = TcpListener::bind(&cfg.listen_addr)?;
+    println!("[Firewall] en ecoute sur {} pour le client", cfg.listen_addr);
 
     let (mut client_stream, addr) = listener.accept()?;
     println!("[Firewall] connexion depuis {}", addr);

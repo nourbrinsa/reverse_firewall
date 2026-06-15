@@ -2,13 +2,14 @@ use std::net::TcpStream;
 use rand::rngs::OsRng;
 use rand::RngCore;
 
-use reverse_firewall::{client, crypto, messages, net};
+use reverse_firewall::{client, crypto, messages, net, config};
 
 fn main() -> std::io::Result<()> {
+    let cfg = config::ClientConfig::from_env();
     let mut rng = OsRng;
 
-    println!("[Client] connexion au firewall sur :8080...");
-    let mut stream = TcpStream::connect("127.0.0.1:8080")?;
+    println!("[Client] connexion au firewall sur {}...", cfg.firewall_addr);
+    let mut stream = TcpStream::connect(&cfg.firewall_addr)?;
     println!("[Client] connecte");
 
     // Etape 0 : recevoir pk_fw + pk_server
