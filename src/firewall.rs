@@ -174,7 +174,11 @@ impl Firewall {
         }
         let mut s_bytes = [0u8; 32];
         s_bytes.copy_from_slice(&msg.s);
-        let big_c = crypto::xor32(&k1, &s_bytes);
+        let big_c: Vec<u8> = msg.s
+            .iter()
+            .enumerate()
+            .map(|(i, &byte)| byte ^ k1[i % 32])
+            .collect();
 
         // 4. Tirer un nouveau nonce r_tilde, frais et aleatoire.
         let mut r_tilde = [0u8; 32];
@@ -185,7 +189,11 @@ impl Firewall {
         let k2_tilde = crypto::h2(&[r_tilde.as_slice(), kcfs.as_slice()].concat());
 
         // 6. Re-masquer C avec k1_tilde.
-        let s_tilde = crypto::xor32(&k1_tilde, &big_c);
+        let s_tilde: Vec<u8> = big_c
+            .iter()
+            .enumerate()
+            .map(|(i, &byte)| byte ^ k1_tilde[i % 32])
+            .collect();
 
         // 7. Recalculer le MAC sur (r_tilde, s_tilde).
         let t_tilde = crypto::mac(&k2_tilde, &[r_tilde.as_slice(), s_tilde.as_slice()].concat());
