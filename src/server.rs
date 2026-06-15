@@ -1,11 +1,3 @@
-//! Le Serveur : seule entite authentifiee du protocole (signatures, cf Fig. 3).
-//!
-//! Le serveur ne voit jamais X et C directement : il recoit les versions
-//! rerandomisees (X_tilde, C_tilde, e_tilde) envoyees par le firewall. Dans
-//! ce prototype (un seul firewall), e_tilde n'est pas utilise par le
-//! serveur : il sert uniquement pour les chaines de plusieurs firewalls
-//! (Annexe E de l'article), hors scope ici.
-
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use rand::RngCore;
 
