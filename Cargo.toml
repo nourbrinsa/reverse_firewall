@@ -1,8 +1,31 @@
 [package]
 name = "reverse_firewall"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
+# Groupe Ristretto255 (le groupe "G" de l'article) + scalaires (Zp)
 curve25519-dalek = { version = "4", features = ["rand_core"] }
+
+# Signatures du serveur (Sign_skS / vérification de signature)
+ed25519-dalek = { version = "=2.1.1", features = ["rand_core"] }
+
+# Génération d'aléa cryptographique
 rand = "0.8"
+
+# Fonctions de hachage H1, H2 (modélisées comme oracles aléatoires)
+sha2 = "0.10"
+
+# MAC utilisé dans la couche record (Fig. 4)
+hmac = "0.12"
+
+# AEAD utilisé comme AE.Enc / AE.Dec dans la couche record (Fig. 4)
+chacha20poly1305 = "0.10"
+
+# Comparaison en temps constant pour la vérification de MAC
+subtle = "2"
+
+# Pin nécessaire : les versions plus récentes de zeroize demandent
+# l'édition 2024, non supportée par cargo 1.75 (présent dans cet environnement).
+zeroize = "=1.7.0"
+base64ct = "=1.6.0"
