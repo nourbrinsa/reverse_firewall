@@ -1,9 +1,3 @@
-//! Le Client : initiateur du handshake (cf Fig. 3, colonne de gauche).
-//!
-//! A la fin du handshake, le client doit avoir calcule kcs et kcfs,
-//! qui doivent etre identiques aux valeurs calculees par le Serveur
-//! (et kcfs doit aussi etre identique a celle calculee par le Firewall).
-
 use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::scalar::Scalar;
 use ed25519_dalek::{Verifier, VerifyingKey};
