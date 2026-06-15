@@ -18,6 +18,8 @@ mod crypto;
 mod firewall;
 mod messages;
 mod server;
+#[cfg(test)]
+mod tests;
 
 use rand::rngs::OsRng;
 
