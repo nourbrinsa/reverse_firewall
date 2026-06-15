@@ -27,7 +27,24 @@ impl Server {
     ///     (note : SigningKey::generate attend un &mut R ou R: CryptoRng + RngCore)
     ///   - pk = sk.verifying_key()
     pub fn new(rng: &mut impl RngCore) -> Self {
-        todo!("Generer la paire de cles de signature (sk, pk)")
+        // 32 octets aléatoires à utiliser comme clé secrète
+        let mut bytes = [0u8; 32];
+        rng.fill_bytes(&mut bytes);
+
+        // Construction de la clé secrète ed25519 à partir de ces octets
+        let sk = SigningKey::from_bytes(&bytes);
+
+        // Clé publique dérivée depuis sk
+        let pk = sk.verifying_key();
+
+        // Construction et retour du struct Server
+        // kcs et kcfs sont None tant que le handshake n'est pas fini
+        Server {
+            sk,
+            pk,
+            kcs: None,
+            kcfs: None,
+        }
     }
 
     /// Traite le message (X_tilde, C_tilde, e_tilde) recu du firewall et
