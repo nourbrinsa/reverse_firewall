@@ -29,7 +29,7 @@ impl Server {
     pub fn new(rng: &mut impl RngCore) -> Self {
         // 32 octets aléatoires à utiliser comme clé secrète
         let mut bytes = [0u8; 32];
-        rng.fill_bytes(&mut bytes);
+        rng.fill_bytes(bytes.as_mut_slice());
 
         // Construction de la clé secrète ed25519 à partir de ces octets
         let sk = SigningKey::from_bytes(&bytes);
@@ -86,7 +86,7 @@ impl Server {
         let c_tilde_beta2 = beta2 * msg.big_c_tilde;
 
         // 4. Construire le transcript (Y, D, X_tilde^beta1, C_tilde^beta2)
-        let transcript = crypto::concat_points(&[&big_y, &big_d, &x_tilde_beta1, &c_tilde_beta2]);
+        let transcript = crypto::concat_points([&big_y, &big_d, &x_tilde_beta1, &c_tilde_beta2].as_slice());
 
         // 5. Signer le transcript
         let signature = self.sk.sign(&transcript);
@@ -101,7 +101,7 @@ impl Server {
         self.kcfs = Some(crypto::kdf(&kcfs_point));
 
         // 7. Renvoyer la réponse (sigma, Y, D, beta1, beta2)
-        ServerReponse {
+        ServerResponse {
             signature,
             big_y,
             big_d,
@@ -127,11 +127,11 @@ impl Server {
         let kcfs = self.kcfs.unwrap();
 
         // 1. Concaténer r_tilde à kcfs, dériver k1_tilde et k2_tilde depuis r_tilde et kcfs,
-        let mut r_kcfs = msg.r.to_ved();
+        let mut r_kcfs = msg.r.to_vec();
         r_kcfs.extend_from_slice(&kcfs);
 
-        let k1_tilde = crypto::h1(r_kcfs);
-        let k2_tilde = crypto::h1(r_kcfs);
+        let k1_tilde = crypto::h1(&r_kcfs);
+        let k2_tilde = crypto::h2(&r_kcfs);
 
         // 2. Vérifier le MAC (t_tilde == MAC_k2(r_tilde || s_tilde))
         let mut mac_input = msg.r.to_vec();
@@ -148,6 +148,46 @@ impl Server {
         // 4. Déchiffrer C avec kcs pour obtenir le message en clair M
         let m = crypto::ae_decrypt(&kcs, seq, &c_bytes)?;
 
-        Ok(m);
+        Ok(m)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::rngs::OsRng;
+    use crate::crypto;
+
+    #[test]
+    fn test_server_new() {
+        let mut rng = OsRng;
+        let server = Server::new(&mut rng);
+        assert!(server.kcs.is_none());
+        assert!(server.kcfs.is_none());
+        // pk is accessible (used by client and firewall)
+        let _ = server.pk;
+    }
+
+    #[test]
+    fn test_process_firewall_init_sets_keys() {
+        let mut rng = OsRng;
+        let mut server = Server::new(&mut rng);
+
+        // Fake a FirewallToServer message with random points
+        let fake_x_tilde = crypto::base_point(&crypto::random_scalar(&mut rng));
+        let fake_c_tilde = crypto::base_point(&crypto::random_scalar(&mut rng));
+        let fake_enc     = crypto::elgamal_encrypt(&fake_x_tilde, &[0u8; 32], &mut rng);
+
+        let msg = crate::messages::FirewallToServer {
+            big_x_tilde: fake_x_tilde,
+            big_c_tilde: fake_c_tilde,
+            enc_c_tilde: fake_enc,
+        };
+
+        let _response = server.process_firewall_init(msg, &mut rng);
+
+        // After the handshake step, both keys should be set
+        assert!(server.kcs.is_some());
+        assert!(server.kcfs.is_some());
     }
 }
