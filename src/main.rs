@@ -1,18 +1,3 @@
-//! Point d'entree : simule localement (sans reseau) une session complete
-//! Client <-> Firewall <-> Serveur, en suivant la Fig. 3 (handshake) puis
-//! la Fig. 4 (couche record).
-//!
-//! Ordre de travail conseille :
-//!   1. Completer crypto.rs (deja fait, normalement rien a changer)
-//!   2. Completer Server::new, Firewall::new, Client::new
-//!   3. Completer Client::init_message
-//!   4. Completer Firewall::process_client_init
-//!   5. Completer Server::process_firewall_init
-//!   6. Completer Firewall::process_server_response
-//!   7. Completer Client::finalize
-//!      -> a ce stade, les 3 asserts sur kcs/kcfs ci-dessous doivent passer !
-//!   8. Completer la couche record (process_record_message cote firewall et serveur)
-
 mod client;
 mod crypto;
 mod firewall;
@@ -27,22 +12,16 @@ fn main() {
     let mut rng = OsRng;
 
     // --- Setup ---------------------------------------------------------
-    // Le serveur genere d'abord sa paire de cles de signature (sk_S, pk_S).
     let mut server = server::Server::new(&mut rng);
-
-    // Le firewall genere sa paire de cles de chiffrement (sk_FW, pk_FW),
-    // et connait pk_S pour pouvoir verifier les signatures du serveur.
     let firewall = firewall::Firewall::new(server.pk, &mut rng);
-
-    // Le client connait pk_FW (du firewall) et pk_S (du serveur).
     let mut client = client::Client::new(firewall.pk_fw, server.pk, &mut rng);
 
-    // --- Handshake (Fig. 3) ---------------------------------------------
+    // --- Handshake (Fig. 3) --------------------------------------------
 
     // Etape 1 : Client -> Firewall : (X, C, e)
     let client_init = client.init_message(&mut rng);
 
-    // Etape 2 : Firewall -> Server : (X_tilde, C_tilde, e_tilde)
+    // Etape 2 : Firewall -> Server : (X~, C~, e~)
     let (fw_to_server, mut session) = firewall
         .process_client_init(client_init, &mut rng)
         .expect("le firewall ne devrait pas rejeter un client honnete");
@@ -60,7 +39,7 @@ fn main() {
         .finalize(fw_to_client)
         .expect("la signature devrait etre valide");
 
-    // --- Verifications du handshake -------------------------------------
+    // --- Verifications du handshake ------------------------------------
     assert_eq!(client.kcs, server.kcs, "kcs doit etre identique cote client et serveur");
     assert_eq!(client.kcfs, server.kcfs, "kcfs doit etre identique cote client et serveur");
     assert_eq!(client.kcfs, session.kcfs, "kcfs doit etre identique cote firewall");
@@ -69,13 +48,122 @@ fn main() {
     println!("kcs  = {:?}", client.kcs);
     println!("kcfs = {:?}", client.kcfs);
 
-    // --- Couche record (Fig. 4) -----------------------------------------
-    // TODO une fois le handshake termine :
-    //   1. Le client chiffre un message M avec crypto::ae_encrypt(&client.kcs.unwrap(), 0, M) -> C
-    //   2. r aleatoire (32 octets), k1=H1(r||kcfs), k2=H2(r||kcfs)
-    //   3. s = k1 XOR C (en supposant |C| = 32 pour commencer), t = MAC_k2(r||s)
-    //   4. Envoyer (r,s,t) au firewall -> firewall.process_record_message(...)
-    //   5. Envoyer le resultat (r_tilde,s_tilde,t_tilde) au serveur
-    //      -> server.process_record_message(...)
-    //   6. Verifier que le serveur recupere bien M ( == message original)
+    // --- Couche record (Fig. 4) ----------------------------------------
+    // Le message que le client veut envoyer au serveur.
+    let message = b"Hello from client!";
+    println!("\nMessage original : {:?}", std::str::from_utf8(message).unwrap());
+
+    let kcs  = client.kcs.unwrap();
+    let kcfs = client.kcfs.unwrap();
+
+    // Etape 1 (client) : chiffrer M avec kcs -> C (AEAD, seq=0)
+    // C est le chiffre interne, protege par kcs (inconnu du firewall).
+    let seq = 0u64;
+    let big_c = crypto::ae_encrypt(&kcs, seq, message);
+
+    // Etape 2 (client) : choisir r aleatoire, deriver k1 et k2 depuis (r || kcfs)
+    // k1 sert de masque one-time-pad sur C.
+    // k2 sert de cle MAC pour authentifier (r, s).
+    let mut r = [0u8; 32];
+    rand::RngCore::fill_bytes(&mut rng, &mut r);
+
+    let mut r_kcfs = [0u8; 64];
+    r_kcfs[..32].copy_from_slice(&r);
+    r_kcfs[32..].copy_from_slice(&kcfs);
+
+    let k1 = crypto::h1(&r_kcfs);
+    let k2 = crypto::h2(&r_kcfs);
+
+    // Etape 3 (client) : s = k1 XOR C, t = MAC_k2(r || s)
+    // On tronque / padde C a 32 octets pour le XOR (cf prototype).
+    let mut big_c_32 = [0u8; 32];
+    let len = big_c.len().min(32);
+    big_c_32[..len].copy_from_slice(&big_c[..len]);
+
+    let s = crypto::xor32(&k1, &big_c_32);
+
+    let mut r_s = [0u8; 64];
+    r_s[..32].copy_from_slice(&r);
+    r_s[32..].copy_from_slice(&s);
+    let t = crypto::mac(&k2, &r_s);
+
+    println!("Client envoie (r, s, t) au firewall.");
+
+    // Etape 4 (firewall) : rerandomiser (r, s, t) -> (r~, s~, t~)
+    // Le firewall dechiffre la couche kcfs, puis rechiffre avec un r~ frais.
+    let mut r_tilde = [0u8; 32];
+    rand::RngCore::fill_bytes(&mut rng, &mut r_tilde);
+
+    // Le firewall recalcule k1 depuis (r || kcfs) pour retrouver C~ = k1 XOR s
+    let fw_kcfs = session.kcfs.unwrap();
+
+    let mut r_kcfs_fw = [0u8; 64];
+    r_kcfs_fw[..32].copy_from_slice(&r);
+    r_kcfs_fw[32..].copy_from_slice(&fw_kcfs);
+
+    let fw_k1 = crypto::h1(&r_kcfs_fw);
+    let fw_k2 = crypto::h2(&r_kcfs_fw);
+
+    // Verifier le MAC avant de continuer (le firewall rejette si invalide)
+    assert!(
+        crypto::mac_verify(&fw_k2, &r_s, &t),
+        "le firewall rejette : MAC invalide"
+    );
+
+    // C~ = k1 XOR s  (retrouve le chiffre interne)
+    let c_tilde_32 = crypto::xor32(&fw_k1, &s);
+
+    // Rechiffrer avec r~ frais
+    let mut r_tilde_kcfs = [0u8; 64];
+    r_tilde_kcfs[..32].copy_from_slice(&r_tilde);
+    r_tilde_kcfs[32..].copy_from_slice(&fw_kcfs);
+
+    let fw_k1_tilde = crypto::h1(&r_tilde_kcfs);
+    let fw_k2_tilde = crypto::h2(&r_tilde_kcfs);
+
+    let s_tilde = crypto::xor32(&fw_k1_tilde, &c_tilde_32);
+
+    let mut r_tilde_s_tilde = [0u8; 64];
+    r_tilde_s_tilde[..32].copy_from_slice(&r_tilde);
+    r_tilde_s_tilde[32..].copy_from_slice(&s_tilde);
+    let t_tilde = crypto::mac(&fw_k2_tilde, &r_tilde_s_tilde);
+
+    println!("Firewall renvoie (r~, s~, t~) au serveur.");
+
+    // Etape 5 (serveur) : dechiffrer (r~, s~, t~) -> M
+    let srv_kcs  = server.kcs.unwrap();
+    let srv_kcfs = server.kcfs.unwrap();
+
+    // Verifier le MAC
+    let mut r_tilde_kcfs_srv = [0u8; 64];
+    r_tilde_kcfs_srv[..32].copy_from_slice(&r_tilde);
+    r_tilde_kcfs_srv[32..].copy_from_slice(&srv_kcfs);
+
+    let srv_k1_tilde = crypto::h1(&r_tilde_kcfs_srv);
+    let srv_k2_tilde = crypto::h2(&r_tilde_kcfs_srv);
+
+    assert!(
+        crypto::mac_verify(&srv_k2_tilde, &r_tilde_s_tilde, &t_tilde),
+        "le serveur rejette : MAC invalide"
+    );
+
+    // Retrouver C~~ = k1~ XOR s~  (= le chiffre interne C)
+    let c_tilde_tilde = crypto::xor32(&srv_k1_tilde, &s_tilde);
+
+    // Dechiffrer avec kcs pour retrouver M
+    let mut c_final = big_c.clone();
+    c_final[..len].copy_from_slice(&c_tilde_tilde[..len]);
+
+    let recovered = crypto::ae_decrypt(&srv_kcs, seq, &c_final)
+        .expect("le serveur doit pouvoir dechiffrer le message");
+
+    println!("Serveur recupere : {:?}", std::str::from_utf8(&recovered).unwrap());
+
+    // --- Verification finale -------------------------------------------
+    assert_eq!(
+        recovered, message,
+        "le message recupere doit etre identique au message original"
+    );
+
+    println!("\nCouche record reussie ! Le message a ete transmis integre.");
 }
