@@ -93,7 +93,7 @@ mod tests {
     fn test_new_pk_derived_from_sk() {
         // La clé publique doit être cohérente avec la clé secrète.
         // On vérifie en signant un message et en vérifiant avec pk.
-        use ed25519_dalek::{Signer, Verifier};
+        use ed25519_dalek::Verifier;
         let mut rng = OsRng;
         let server = Server::new(&mut rng);
         // On accède à sk via process_firewall_init qui signe — ici on vérifie
@@ -190,7 +190,6 @@ mod tests {
         let mut server = Server::new(&mut rng);
         let (msg, x_tilde_scalar, _) = make_firewall_to_server(&mut rng);
 
-        let big_x_tilde = msg.big_x_tilde;
         let response = server.process_firewall_init(msg, &mut rng);
 
         // Le serveur a calculé kcs = X_tilde^(y*beta1).
@@ -215,7 +214,6 @@ mod tests {
         let mut server = Server::new(&mut rng);
         let (msg, _, c_tilde_scalar) = make_firewall_to_server(&mut rng);
 
-        let big_c_tilde = msg.big_c_tilde;
         let response = server.process_firewall_init(msg, &mut rng);
 
         let expected_kcfs_point = (c_tilde_scalar * response.beta2) * response.big_d;
@@ -262,7 +260,7 @@ mod tests {
 
         let kcs = server.kcs.unwrap();
         let kcfs = server.kcfs.unwrap();
-        let plaintext = b"message de test";
+        let plaintext = b"ce_message_fait_exactement_32_oc";
 
         let record = make_record_message(plaintext, &kcs, &kcfs, 0, &mut rng);
         let decrypted = server
@@ -282,7 +280,7 @@ mod tests {
 
         let kcs = server.kcs.unwrap();
         let kcfs = server.kcfs.unwrap();
-        let mut record = make_record_message(b"message", &kcs, &kcfs, 0, &mut rng);
+        let mut record = make_record_message(&[0u8; 32], &kcs, &kcfs, 0, &mut rng);
 
         record.t[0] ^= 0xFF;
 
@@ -300,7 +298,7 @@ mod tests {
 
         let kcs = server.kcs.unwrap();
         let kcfs = server.kcfs.unwrap();
-        let record = make_record_message(b"message", &kcs, &kcfs, 0, &mut rng);
+        let record = make_record_message(&[0u8; 32], &kcs, &kcfs, 0, &mut rng);
 
         let result = server.process_record_message(record, 1);
         assert!(result.is_err(), "Un seq erroné doit être rejeté");
@@ -317,7 +315,7 @@ mod tests {
 
         let kcs = server.kcs.unwrap();
         let wrong_kcfs = [0u8; 32]; // kcfs incorrect
-        let record = make_record_message(b"message", &kcs, &wrong_kcfs, 0, &mut rng);
+        let record = make_record_message(&[0u8; 32], &kcs, &wrong_kcfs, 0, &mut rng);
 
         let result = server.process_record_message(record, 0);
         assert!(result.is_err(), "Un kcfs incorrect doit être rejeté via le MAC");
@@ -333,7 +331,11 @@ mod tests {
 
         let kcs = server.kcs.unwrap();
         let kcfs = server.kcfs.unwrap();
-        let messages: &[&[u8]] = &[b"premier", b"deuxieme", b"troisieme"];
+        let messages: &[&[u8]] = &[
+            b"premier_message_de_32_octets_001",
+            b"deuxieme_message_de_32_octets_02",
+            b"troisieme_message_de_32_octets_3",
+        ];
 
         for (seq, plaintext) in messages.iter().enumerate() {
             let record = make_record_message(plaintext, &kcs, &kcfs, seq as u64, &mut rng);
@@ -345,8 +347,8 @@ mod tests {
     }
 
     #[test]
-    fn test_process_record_message_empty_message() {
-        // Un message vide doit fonctionner sans paniquer.
+    fn test_process_record_message_zero_message() {
+        // Un message rempli de zéros doit fonctionner sans paniquer.
         let mut rng = OsRng;
         let mut server = Server::new(&mut rng);
         let (msg, _, _) = make_firewall_to_server(&mut rng);
@@ -354,12 +356,12 @@ mod tests {
 
         let kcs = server.kcs.unwrap();
         let kcfs = server.kcfs.unwrap();
-        let record = make_record_message(b"", &kcs, &kcfs, 0, &mut rng);
+        let record = make_record_message(&[0u8; 32], &kcs, &kcfs, 0, &mut rng);
 
         let decrypted = server
             .process_record_message(record, 0)
-            .expect("Un message vide doit être déchiffré sans erreur");
-        assert_eq!(decrypted, b"");
+            .expect("Un message de 32 octets doit être déchiffré sans erreur");
+        assert_eq!(decrypted, [0u8; 32]);
     }
 
     // -----------------------------------------------------------------------

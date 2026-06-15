@@ -113,9 +113,11 @@ impl Server {
             return Err("MAC Invalide : message rejeté".to_string());
         }
 
-        // 3. Retrouver C = k1_tilde XOR s_tilde (on suppose que s fait exactement 32 octets)
-        let s32: [u8; 32] = msg.s.as_slice().try_into().map_err(|_| "se ne fait pas 32 octets".to_string())?;
-        let c_bytes = crypto::xor32(&k1_tilde, &s32);
+        // 3. Retrouver C = k1_tilde XOR s_tilde (généralisé à la longueur réelle de s)
+        let c_bytes: Vec<u8> = msg.s.iter()
+            .enumerate()
+            .map(|(i, &byte)| byte ^ k1_tilde[i % 32])
+            .collect();
 
         // 4. Déchiffrer C avec kcs pour obtenir le message en clair M
         let m = crypto::ae_decrypt(&kcs, seq, &c_bytes)?;
