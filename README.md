@@ -2,14 +2,14 @@
 
 ## Repartition du travail
 
-| Fichier        | Responsable | Statut |
-|----------------|-------------|--------|
-| `crypto.rs`    | N           | Implemente + teste |
-| `messages.rs`  | Commun      | Complet, ne pas modifier (sauf si besoin avere) |
-| `client.rs`    | Personne A  | TODO |
-| `firewall.rs`  | N           | TODO |
-| `server.rs`    | Personne B  | TODO |
-| `main.rs`      | Commun      | Squelette d'orchestration fourni |
+| Fichier       | Responsable | Statut                                          |
+| ------------- | ----------- | ----------------------------------------------- |
+| `crypto.rs`   | N           | Implemente + teste                              |
+| `messages.rs` | Commun      | Complet, ne pas modifier (sauf si besoin avere) |
+| `client.rs`   | Personne A  | TODO                                            |
+| `firewall.rs` | N           | TODO                                            |
+| `server.rs`   | Personne B  | TODO                                            |
+| `main.rs`     | Commun      | Squelette d'orchestration fourni                |
 
 ## Le contrat d'interface (a respecter par tous)
 
@@ -23,6 +23,7 @@ autres (ca cassera leur code a la compilation).
 pub kcs:  Option<[u8; 32]>,
 pub kcfs: Option<[u8; 32]>,
 ```
+
 Toujours des `[u8; 32]`, obtenus via `crypto::kdf(&point)`. Jamais de
 `RistrettoPoint` ou de `Scalar` brut en dehors du handshake.
 
@@ -97,8 +98,26 @@ cargo test     # tests unitaires de chaque module
 cargo run      # simulation complete (handshake + record layer)
 ```
 
+## Solve git commits conflicts when somebody else already pushed
 
-First
+First, if you have already committed the code, revert it
 
-``bash
-`` 
+```bash
+git reset HEAD~
+```
+
+Then stash your changes
+
+```bash
+git stash push -m <stash_message> --include-untracked
+```
+
+Now you can pull your changes
+
+Then pop the stash:
+
+```bash
+git stash pop
+```
+
+And finally, you can commit your changes without any conflict
