@@ -71,7 +71,43 @@ impl Server {
         msg: FirewallToServer,
         rng: &mut impl RngCore,
     ) -> ServerResponse {
-        todo!("Choisir y,d,beta1,beta2, signer le transcript, calculer kcs et kcfs")
+        // 1. y, d, beta1, beta2 aléatoires
+        let y = crypto::random_scalar(rng);
+        let d = crypto::random_scalar(rng);
+        let beta1 = crypto::random_scalar(rng);
+        let beta2 = crypto::random_scalar(rng);
+
+        // 2. Y = g^y, D = g^d
+        let big_y = crypto::base_point(&y);
+        let big_d = crypto::base_point(&d);
+
+        // 3. X_tilde^beta1 et C_tilde^beta2
+        let x_tilde_beta1 = beta1 * msg.big_x_tilde;
+        let c_tilde_beta2 = beta2 * msg.big_c_tilde;
+
+        // 4. Construire le transcript (Y, D, X_tilde^beta1, C_tilde^beta2)
+        let transcript = crypto::concat_points(&[&big_y, &big_d, &x_tilde_beta1, &c_tilde_beta2]);
+
+        // 5. Signer le transcript
+        let signature = self.sk.sign(&transcript);
+
+        // 6. Calculer les clés de session
+        // kcs = X_tilde^(y * beta1)
+        // kcfs = C_tilde^(d * beta2)
+        let kcs_point = (y * beta1) * msg.big_x_tilde;
+        let kcfs_point = (d * beta2) * msg.big_c_tilde;
+
+        self.kcs = Some(crypto::kdf(&kcs_point));
+        self.kcfs = Some(crypto::kdf(&kcfs_point));
+
+        // 7. Renvoyer la réponse (sigma, Y, D, beta1, beta2)
+        ServerReponse {
+            signature,
+            big_y,
+            big_d,
+            beta1,
+            beta2,
+        }
     }
 
     /// Traite un message de la couche record recu du firewall : (r_tilde, s_tilde, t_tilde).
