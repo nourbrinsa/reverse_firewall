@@ -168,12 +168,8 @@ impl Firewall {
             return Err("MAC invalide a la reception".to_string());
         }
 
-        // 3. Recuperer C = k1 XOR s (prototype : s fait 32 octets).
-        if msg.s.len() != 32 {
-            return Err("taille de s non supportee par ce prototype (attendu : 32 octets)".to_string());
-        }
-        let mut s_bytes = [0u8; 32];
-        s_bytes.copy_from_slice(&msg.s);
+        // 3. Recuperer C = k1 XOR s (XOR cyclique sur k1 de 32 octets,
+        //    fonctionne pour toute taille de s).
         let big_c: Vec<u8> = msg.s
             .iter()
             .enumerate()
