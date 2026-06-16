@@ -134,13 +134,6 @@ pub kcs:  Option<[u8; 32]>,   // Client-Server session key
 pub kcfs: Option<[u8; 32]>,   // Client-Firewall-Server session key
 ```
 
-## Workflow
-
-1. Each team member completes the `todo!()` placeholders in their assigned module
-2. `cargo build` must always succeed, even with incomplete implementations (panics only occur during execution)
-3. Write unit tests within your module to validate your implementation before integration
-4. `cargo run` serves as the final integration test once all components are complete
-
 ## Fixing Git Commit Conflicts When Somebody Else Pushed
 
 If you have uncommitted changes and someone else has already pushed changes that conflict with yours:
