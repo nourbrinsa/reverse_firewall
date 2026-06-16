@@ -1,18 +1,7 @@
-//! Structures de données représentant les messages échangés entre
-//! le Client, le Pare-feu (Firewall) et le Serveur.
-//!
-//! Ces structures correspondent directement aux flèches du diagramme de
-//! la Fig. 3 (handshake) et de la Fig. 4 (couche record) de l'article.
-//! Elles sont déjà complètes : vous n'avez rien à modifier ici pour la
-//! phase 1 (simulation locale, sans réseau).
-//!
-//! Phase 2 (réseau) : il faudra leur ajouter `#[derive(Serialize, Deserialize)]`
-//! (crate serde) pour pouvoir les envoyer sur le réseau. On en reparlera
-//! une fois la phase 1 terminée.
-
 use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::scalar::Scalar;
 use ed25519_dalek::Signature;
+use serde::{Deserialize, Serialize};
 
 use crate::crypto::ElGamalCiphertext;
 
@@ -22,6 +11,7 @@ use crate::crypto::ElGamalCiphertext;
 
 /// Message 1 : Client -> Firewall.
 /// Correspond à (X, C, e) dans l'article.
+#[derive(Serialize, Deserialize)]
 pub struct ClientInit {
     pub big_x: RistrettoPoint, // X = g^x
     pub big_c: RistrettoPoint, // C = g^c
@@ -30,6 +20,7 @@ pub struct ClientInit {
 
 /// Message 2 : Firewall -> Server.
 /// Correspond à (X̃, C̃, ẽ) dans l'article.
+#[derive(Serialize, Deserialize)]
 pub struct FirewallToServer {
     pub big_x_tilde: RistrettoPoint,
     pub big_c_tilde: RistrettoPoint,
@@ -38,6 +29,7 @@ pub struct FirewallToServer {
 
 /// Message 3 : Server -> Firewall.
 /// Correspond à (sigma, Y, D, beta1, beta2) dans l'article.
+#[derive(Serialize, Deserialize)]
 pub struct ServerResponse {
     pub big_y: RistrettoPoint,
     pub big_d: RistrettoPoint,
@@ -48,6 +40,7 @@ pub struct ServerResponse {
 
 /// Message 4 : Firewall -> Client.
 /// Correspond à (sigma, Y, D, gamma1, gamma2) dans l'article.
+#[derive(Serialize, Deserialize)]
 pub struct FirewallToClient {
     pub big_y: RistrettoPoint,
     pub big_d: RistrettoPoint,
@@ -63,8 +56,22 @@ pub struct FirewallToClient {
 /// Un message de la couche record : triplet (r, s, t).
 /// Utilisé à la fois pour le message Client -> Firewall et Firewall -> Server
 /// (avec des valeurs differentes (r,s,t) vs (r_tilde, s_tilde, t_tilde)).
+#[derive(Serialize, Deserialize)]
 pub struct RecordMessage {
     pub r: [u8; 32],
     pub s: Vec<u8>, // longueur variable car s = k1 XOR C, et |C| depend de |M|
     pub t: [u8; 32],
+}
+
+/// Envoye par le Server au Firewall a la connexion.
+#[derive(Serialize, Deserialize)]
+pub struct ServerHello {
+    pub pk_server: ed25519_dalek::VerifyingKey,
+}
+
+/// Envoye par le Firewall au Client a la connexion : relai de pk_server + pk_fw.
+#[derive(Serialize, Deserialize)]
+pub struct FirewallHello {
+    pub pk_fw: RistrettoPoint,
+    pub pk_server: ed25519_dalek::VerifyingKey,
 }
