@@ -1,8 +1,8 @@
-use std::net::TcpStream;
 use rand::rngs::OsRng;
 use rand::RngCore;
-
-use reverse_firewall::{client, crypto, messages, net, config};
+use std::io::{self, BufRead};
+use std::net::TcpStream;
+use reverse_firewall::{client, config, crypto, messages, net};
 
 fn main() -> std::io::Result<()> {
     let cfg = config::ClientConfig::from_env();
@@ -30,37 +30,40 @@ fn main() -> std::io::Result<()> {
     client.finalize(fw_to_client).expect("signature invalide");
 
     println!("[Client] Handshake reussi !");
-    println!("[Client] kcs  = {:?}", client.kcs);
-    println!("[Client] kcfs = {:?}", client.kcfs);
-
-    // --- Couche record ---
-    let message = b"Hello from client!";
-    println!("\n[Client] message original : \"{}\"", std::str::from_utf8(message).unwrap());
+    println!("[Client] Tapez vos messages (Ctrl+C pour quitter) :");
 
     let kcs = client.kcs.unwrap();
     let kcfs = client.kcfs.unwrap();
-    let seq = 0u64;
+    let stdin = io::stdin();
+    let mut seq = 0u64;
 
-    let big_c = crypto::ae_encrypt(&kcs, seq, message);
+    for line in stdin.lock().lines() {
+        let line = line?;
+        if line.is_empty() {
+            continue;
+        }
 
-    let mut r = [0u8; 32];
-    rng.fill_bytes(&mut r);
+        // encrypt with kcs
+        let big_c = crypto::ae_encrypt(&kcs, seq, line.as_bytes());
 
-    let r_kcfs = [r.as_slice(), kcfs.as_slice()].concat();
-    let k1 = crypto::h1(&r_kcfs);
-    let k2 = crypto::h2(&r_kcfs);
+        // build (r, s, t)
+        let mut r = [0u8; 32];
+        rng.fill_bytes(&mut r);
+        let r_kcfs = [r.as_slice(), kcfs.as_slice()].concat();
+        let k1 = crypto::h1(&r_kcfs);
+        let k2 = crypto::h2(&r_kcfs);
+        let s: Vec<u8> = big_c
+            .iter()
+            .enumerate()
+            .map(|(i, &b)| b ^ k1[i % 32])
+            .collect();
+        let t = crypto::mac(&k2, &[r.as_slice(), s.as_slice()].concat());
 
-    let s: Vec<u8> = big_c
-        .iter()
-        .enumerate()
-        .map(|(i, &byte)| byte ^ k1[i % 32])
-        .collect();
+        net::send_msg(&mut stream, &messages::RecordMessage { r, s, t })?;
+        println!("[Client] message #{} envoye", seq);
 
-    let t = crypto::mac(&k2, &[r.as_slice(), s.as_slice()].concat());
-
-    let record = messages::RecordMessage { r, s, t };
-    net::send_msg(&mut stream, &record)?;
-    println!("[Client] message record envoye");
+        seq += 1;
+    }
 
     Ok(())
 }

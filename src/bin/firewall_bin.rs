@@ -1,7 +1,6 @@
-use std::net::{TcpListener, TcpStream};
 use rand::rngs::OsRng;
-
-use reverse_firewall::{firewall, messages, net, config};
+use std::net::{TcpListener, TcpStream};
+use reverse_firewall::{config, firewall, messages, net};
 
 fn main() -> std::io::Result<()> {
     let cfg = config::FirewallConfig::from_env();
@@ -33,9 +32,7 @@ fn main() -> std::io::Result<()> {
     })?;
     println!("[Firewall] hello envoye au client");
 
-    // --- Handshake ---
-
-    // Etape 1 : reception de (X, C, e) depuis le client
+    // handshake
     let client_init: messages::ClientInit = net::recv_msg(&mut client_stream)?;
     println!("[Firewall] recu ClientInit");
 
@@ -59,20 +56,33 @@ fn main() -> std::io::Result<()> {
 
     // Etape 6 : envoi de (sigma, Y, D, gamma1, gamma2) au client
     net::send_msg(&mut client_stream, &fw_to_client)?;
-    println!("[Firewall] envoye FirewallToClient");
+    println!("[Firewall] handshake termine, relai des messages...");
 
-    // --- Couche record : pont transparent ---
-    println!("[Firewall] en attente du message record du client...");
-    let client_record: messages::RecordMessage = net::recv_msg(&mut client_stream)?;
-    println!("[Firewall] recu RecordMessage du client");
+    // record loop — relay indefinitely until client disconnects
+    let kcfs = session.kcfs.expect("kcfs manquant");
+    loop {
+        let client_record: messages::RecordMessage = match net::recv_msg(&mut client_stream) {
+            Ok(r) => r,
+            Err(e) => {
+                println!("[Firewall] client deconnecte : {}", e);
+                break;
+            }
+        };
 
-    let kcfs = session.kcfs.expect("kcfs doit etre defini");
-    let fw_record = fw
-        .process_record_message(client_record, &kcfs, &mut rng)
-        .expect("message record invalide");
+        let fw_record = match fw.process_record_message(client_record, &kcfs, &mut rng) {
+            Ok(r) => r,
+            Err(e) => {
+                println!("[Firewall] message invalide, ignore : {}", e);
+                continue;
+            }
+        };
 
-    net::send_msg(&mut server_stream, &fw_record)?;
-    println!("[Firewall] message record relaye au serveur");
+        if let Err(e) = net::send_msg(&mut server_stream, &fw_record) {
+            println!("[Firewall] serveur deconnecte : {}", e);
+            break;
+        }
+    }
 
+    println!("[Firewall] session terminee");
     Ok(())
 }

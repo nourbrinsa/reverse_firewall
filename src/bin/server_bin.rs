@@ -1,8 +1,6 @@
-use std::net::TcpListener;
 use rand::rngs::OsRng;
-
-
-use reverse_firewall::{server, messages, net,config};
+use std::net::TcpListener;
+use reverse_firewall::{config, messages, net, server};
 
 fn main() -> std::io::Result<()> {
     let cfg = config::ServerConfig::from_env();
@@ -29,20 +27,37 @@ fn main() -> std::io::Result<()> {
     net::send_msg(&mut stream, &response)?;
     println!("[Server] reponse signee envoyee");
 
+    println!("[Server] handshake termine, en attente des messages...");
     println!("[Server] kcs  = {:?}", server.kcs);
     println!("[Server] kcfs = {:?}", server.kcfs);
 
-    // --- Couche record ---
-    println!("[Server] en attente du message record...");
-    let record: messages::RecordMessage = net::recv_msg(&mut stream)?;
+    // record loop
+    let mut seq = 0u64;
+    loop {
+        let record: messages::RecordMessage = match net::recv_msg(&mut stream) {
+            Ok(r) => r,
+            Err(e) => {
+                println!("[Server] firewall deconnecte : {}", e);
+                break;
+            }
+        };
 
-    let seq = 0u64;
-    let plaintext = server
-        .process_record_message(record, seq)
-        .expect("dechiffrement echoue");
+        match server.process_record_message(record, seq) {
+            Ok(plaintext) => {
+                println!(
+                    "[Server] message #{} : \"{}\"",
+                    seq,
+                    String::from_utf8_lossy(&plaintext)
+                );
+                seq += 1;
+            }
+            Err(e) => {
+                println!("[Server] erreur dechiffrement message #{} : {}", seq, e);
+                // do NOT increment seq on error — the counters must stay in sync
+            }
+        }
+    }
 
-    println!("[Server] message recu et dechiffre : \"{}\"",
-        String::from_utf8_lossy(&plaintext));
-
+    println!("[Server] session terminee");
     Ok(())
 }
