@@ -1,77 +1,156 @@
-use curve25519_dalek::ristretto::RistrettoPoint;
+//! Types des messages échangés entre Client, Firewall et Serveur.
+//! Inclut la sérialisation manuelle des types de curve25519-dalek
+//! (RistrettoPoint, Scalar) et ed25519-dalek (Signature) qui n'implémentent
+//! pas Serialize/Deserialize nativement.
+
+use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
 use curve25519_dalek::scalar::Scalar;
 use ed25519_dalek::Signature;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::de::Error as DeError;
 
 use crate::crypto::ElGamalCiphertext;
 
-// =======================================================================
-//  Messages du handshake (Fig. 3)
-// =======================================================================
+// ---------------------------------------------------------------------------
+// Helpers de sérialisation : RistrettoPoint ↔ [u8; 32]
+// ---------------------------------------------------------------------------
 
-/// Message 1 : Client -> Firewall.
-/// Correspond à (X, C, e) dans l'article.
-#[derive(Serialize, Deserialize)]
-pub struct ClientInit {
-    pub big_x: RistrettoPoint, // X = g^x
-    pub big_c: RistrettoPoint, // C = g^c
-    pub enc_c: ElGamalCiphertext, // e = Enc_pkFW(c)
+fn ser_point<S: Serializer>(p: &RistrettoPoint, s: S) -> Result<S::Ok, S::Error> {
+    p.compress().to_bytes().serialize(s)
 }
 
-/// Message 2 : Firewall -> Server.
-/// Correspond à (X̃, C̃, ẽ) dans l'article.
+fn de_point<'de, D: Deserializer<'de>>(d: D) -> Result<RistrettoPoint, D::Error> {
+    let bytes = <[u8; 32]>::deserialize(d)?;
+    CompressedRistretto(bytes)
+        .decompress()
+        .ok_or_else(|| D::Error::custom("point Ristretto invalide"))
+}
+
+// ---------------------------------------------------------------------------
+// Helpers de sérialisation : Scalar ↔ [u8; 32]
+// ---------------------------------------------------------------------------
+
+fn ser_scalar<S: Serializer>(sc: &Scalar, s: S) -> Result<S::Ok, S::Error> {
+    sc.to_bytes().serialize(s)
+}
+
+fn de_scalar<'de, D: Deserializer<'de>>(d: D) -> Result<Scalar, D::Error> {
+    let bytes = <[u8; 32]>::deserialize(d)?;
+    Ok(Scalar::from_bytes_mod_order(bytes))
+}
+
+// ---------------------------------------------------------------------------
+// Helpers de sérialisation : Signature ↔ [u8; 64]
+// ---------------------------------------------------------------------------
+
+fn ser_sig<S: Serializer>(sig: &Signature, s: S) -> Result<S::Ok, S::Error> {
+    sig.to_bytes().serialize(s)
+}
+
+fn de_sig<'de, D: Deserializer<'de>>(d: D) -> Result<Signature, D::Error> {
+    let bytes = <[u8; 64]>::try_from(
+        <Vec<u8>>::deserialize(d)?.as_slice()
+    ).map_err(|_| D::Error::custom("signature doit faire 64 bytes"))?;
+    Ok(Signature::from_bytes(&bytes))
+}
+
+// ---------------------------------------------------------------------------
+// Helpers de sérialisation : VerifyingKey ↔ [u8; 32]
+// ---------------------------------------------------------------------------
+
+fn ser_vk<S: Serializer>(vk: &ed25519_dalek::VerifyingKey, s: S) -> Result<S::Ok, S::Error> {
+    vk.to_bytes().serialize(s)
+}
+
+fn de_vk<'de, D: Deserializer<'de>>(d: D) -> Result<ed25519_dalek::VerifyingKey, D::Error> {
+    let bytes = <[u8; 32]>::deserialize(d)?;
+    ed25519_dalek::VerifyingKey::from_bytes(&bytes)
+        .map_err(|e| D::Error::custom(format!("VerifyingKey invalide : {}", e)))
+}
+
+// ===========================================================================
+//  Messages du handshake (Fig. 3)
+// ===========================================================================
+
+/// Message 1 : Client -> Firewall  (X, C, e)
+#[derive(Serialize, Deserialize)]
+pub struct ClientInit {
+    #[serde(serialize_with = "ser_point", deserialize_with = "de_point")]
+    pub big_x: RistrettoPoint,
+    #[serde(serialize_with = "ser_point", deserialize_with = "de_point")]
+    pub big_c: RistrettoPoint,
+    pub enc_c: ElGamalCiphertext,
+}
+
+/// Message 2 : Firewall -> Server  (X̃, C̃, ẽ)
 #[derive(Serialize, Deserialize)]
 pub struct FirewallToServer {
+    #[serde(serialize_with = "ser_point", deserialize_with = "de_point")]
     pub big_x_tilde: RistrettoPoint,
+    #[serde(serialize_with = "ser_point", deserialize_with = "de_point")]
     pub big_c_tilde: RistrettoPoint,
     pub enc_c_tilde: ElGamalCiphertext,
 }
 
-/// Message 3 : Server -> Firewall.
-/// Correspond à (sigma, Y, D, beta1, beta2) dans l'article.
+/// Message 3 : Server -> Firewall  (σ, Y, D, β1, β2)
 #[derive(Serialize, Deserialize)]
 pub struct ServerResponse {
+    #[serde(serialize_with = "ser_point", deserialize_with = "de_point")]
     pub big_y: RistrettoPoint,
+    #[serde(serialize_with = "ser_point", deserialize_with = "de_point")]
     pub big_d: RistrettoPoint,
+    #[serde(serialize_with = "ser_scalar", deserialize_with = "de_scalar")]
     pub beta1: Scalar,
+    #[serde(serialize_with = "ser_scalar", deserialize_with = "de_scalar")]
     pub beta2: Scalar,
+    #[serde(serialize_with = "ser_sig", deserialize_with = "de_sig")]
     pub signature: Signature,
 }
 
-/// Message 4 : Firewall -> Client.
-/// Correspond à (sigma, Y, D, gamma1, gamma2) dans l'article.
+/// Message 4 : Firewall -> Client  (σ, Y, D, γ1, γ2)
 #[derive(Serialize, Deserialize)]
 pub struct FirewallToClient {
+    #[serde(serialize_with = "ser_point", deserialize_with = "de_point")]
     pub big_y: RistrettoPoint,
+    #[serde(serialize_with = "ser_point", deserialize_with = "de_point")]
     pub big_d: RistrettoPoint,
+    #[serde(serialize_with = "ser_scalar", deserialize_with = "de_scalar")]
     pub gamma1: Scalar,
+    #[serde(serialize_with = "ser_scalar", deserialize_with = "de_scalar")]
     pub gamma2: Scalar,
+    #[serde(serialize_with = "ser_sig", deserialize_with = "de_sig")]
     pub signature: Signature,
 }
 
-// =======================================================================
+// ===========================================================================
 //  Messages de la couche record (Fig. 4)
-// =======================================================================
+// ===========================================================================
 
-/// Un message de la couche record : triplet (r, s, t).
-/// Utilisé à la fois pour le message Client -> Firewall et Firewall -> Server
-/// (avec des valeurs differentes (r,s,t) vs (r_tilde, s_tilde, t_tilde)).
+/// Triplet (r, s, t) — Client->Firewall ou Firewall->Server.
 #[derive(Serialize, Deserialize)]
 pub struct RecordMessage {
     pub r: [u8; 32],
-    pub s: Vec<u8>, // longueur variable car s = k1 XOR C, et |C| depend de |M|
+    pub s: Vec<u8>,
     pub t: [u8; 32],
 }
 
-/// Envoye par le Server au Firewall a la connexion.
+// ===========================================================================
+//  Messages de bootstrap (échange de clés publiques au démarrage)
+// ===========================================================================
+
+/// Envoyé par le Server au Firewall à la connexion.
 #[derive(Serialize, Deserialize)]
 pub struct ServerHello {
+    #[serde(serialize_with = "ser_vk", deserialize_with = "de_vk")]
     pub pk_server: ed25519_dalek::VerifyingKey,
 }
 
-/// Envoye par le Firewall au Client a la connexion : relai de pk_server + pk_fw.
+/// Envoyé par le Firewall au Client : relai de pk_server + pk_fw.
 #[derive(Serialize, Deserialize)]
 pub struct FirewallHello {
+    #[serde(serialize_with = "ser_point", deserialize_with = "de_point")]
     pub pk_fw: RistrettoPoint,
+    #[serde(serialize_with = "ser_vk", deserialize_with = "de_vk")]
     pub pk_server: ed25519_dalek::VerifyingKey,
 }
+
