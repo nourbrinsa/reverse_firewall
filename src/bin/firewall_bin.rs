@@ -47,7 +47,7 @@ fn main() -> std::io::Result<()> {
     net::send_msg(&mut server_stream, &fw_to_server)?;
     println!("[Firewall] envoye FirewallToServer");
 
-    // Etape 3 : reception de (sigma, Y, D, beta1, beta2) depuis le serveur
+    // Etape 5 : reception de (sigma, Y, D, beta1, beta2) depuis le serveur
     let server_response: messages::ServerResponse = net::recv_msg(&mut server_stream)?;
     println!("[Firewall] recu ServerResponse");
 
@@ -57,7 +57,7 @@ fn main() -> std::io::Result<()> {
 
     println!("[Firewall] kcfs = {:?}", session.kcfs);
 
-    // Etape 4 : envoi de (sigma, Y, D, gamma1, gamma2) au client
+    // Etape 6 : envoi de (sigma, Y, D, gamma1, gamma2) au client
     net::send_msg(&mut client_stream, &fw_to_client)?;
     println!("[Firewall] envoye FirewallToClient");
 

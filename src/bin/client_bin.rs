@@ -23,7 +23,7 @@ fn main() -> std::io::Result<()> {
     net::send_msg(&mut stream, &client_init)?;
     println!("[Client] ClientInit envoye");
 
-    // Etape 4 (recue) : (sigma, Y, D, gamma1, gamma2)
+    // Etape 7 (recue) : (sigma, Y, D, gamma1, gamma2)
     let fw_to_client: messages::FirewallToClient = net::recv_msg(&mut stream)?;
     println!("[Client] FirewallToClient recu");
 

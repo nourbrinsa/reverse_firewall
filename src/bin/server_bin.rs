@@ -25,7 +25,7 @@ fn main() -> std::io::Result<()> {
 
     let response = server.process_firewall_init(fw_to_server, &mut rng);
 
-    // Envoi de (sigma, Y, D, beta1, beta2)
+    // Etape 4 : Envoi de (sigma, Y, D, beta1, beta2)
     net::send_msg(&mut stream, &response)?;
     println!("[Server] reponse signee envoyee");
 
