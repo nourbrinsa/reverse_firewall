@@ -1,2 +1,4 @@
 /target
 .env**
+src/pki/pki/
+pki/

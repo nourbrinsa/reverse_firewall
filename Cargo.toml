@@ -32,3 +32,7 @@ subtle = "2"
 # l'édition 2024, non supportée par cargo 1.75 (présent dans cet environnement).
 zeroize = "=1.7.0"
 base64ct = "=1.6.0"
+
+# PKI : Parsing de clés PEM et structures PKCS#8
+rustls-pemfile = "2"
+pkcs8 = { version = "0.10", features = ["alloc"] }
