@@ -245,6 +245,7 @@ generate_pki_once() {
   install -m 644 "$FULL_PKI_DIR/server.crt" "$STAGE_DIR/client/pki/server.crt"
   install -m 644 "$FULL_PKI_DIR/firewall.crt" "$STAGE_DIR/client/pki/firewall.crt"
   install -m 644 "$FULL_PKI_DIR/server_pub.pem" "$STAGE_DIR/client/pki/server_pub.pem"
+  install -m 644 "$FULL_PKI_DIR/server_pub.pem" "$STAGE_DIR/client/pki/firewall_pk_ristretto.bin"
 
   log "PKI générée. ca.key est conservée ici, hors runtime: $CA_PRIVATE_DIR/ca.key"
 }
