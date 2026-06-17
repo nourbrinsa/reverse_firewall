@@ -109,6 +109,7 @@ pub struct ServerResponse {
     pub beta2: Scalar,
     #[serde(serialize_with = "ser_sig", deserialize_with = "de_sig")]
     pub signature: Signature,
+    pub mac_finished: [u8; 32], // MAC de la transcription
 }
 
 /// Message 4 : Firewall -> Client  (σ, Y, D, γ1, γ2)
@@ -126,6 +127,7 @@ pub struct FirewallToClient {
     pub gamma2: Scalar,
     #[serde(serialize_with = "ser_sig", deserialize_with = "de_sig")]
     pub signature: Signature,
+    pub mac_finished: [u8; 32], // MAC de la transcription recalculé par le firewall
 }
 
 // ===========================================================================

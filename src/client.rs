@@ -89,13 +89,21 @@ impl Client {
             .map_err(|e| format!("Signature invalide : {}", e))?;
 
         // Etape 3 : calculer kcs et kcfs
-        // kcs  = Y^(x*gamma1)
-        let kcs_point = (self.x * msg.gamma1) * msg.big_y;
-        // kcfs = D^(c*gamma2)
-        let kcfs_point = (self.c * msg.gamma2) * msg.big_d;
+        let dh_secret_kcs = (self.x * msg.gamma1) * msg.big_y;  // Y^(x*gamma1)
+        let dh_secret_kcfs = (self.c * msg.gamma2) * msg.big_d; // D^(c*gamma2)
 
-        self.kcs = Some(crypto::kdf(&kcs_point));
-        self.kcfs = Some(crypto::kdf(&kcfs_point));
+        let prk_kcs = crypto::hkdf_extract(&[], crypto::kdf(&dh_secret_kcs).as_ref());
+        let prk_kcfs = crypto::hkdf_extract(&[], crypto::kdf(&dh_secret_kcfs).as_ref());
+
+        let handshake_key = crypto::hkdf_expand(&prk_kcfs, b"handshake_mac");
+        let expected_mac = crypto::mac(&handshake_key, &transcript);
+
+        if expected_mac[..] != msg.mac_finished[..] {
+            return Err("MAC finished invalide, handshake corrompu".to_string());
+        }
+
+        self.kcs = Some(crypto::hkdf_expand(&prk_kcs, b"session_kcs"));
+        self.kcfs = Some(crypto::hkdf_expand(&prk_kcfs, b"session_kcfs"));
 
         Ok(())
     }

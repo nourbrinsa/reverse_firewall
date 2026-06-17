@@ -131,3 +131,28 @@ pub fn xor_32(a: &[u8; 32], b: &[u8; 32]) -> [u8; 32] {
     }
     out
 }
+
+// ---------------------------------------------------------------------------
+// Key schedule
+// ---------------------------------------------------------------------------
+
+// Crée un pseudo-aléatoire (PRK) à partir d'un sel et d'un secret (ikm)
+pub fn hkdf_extract(salt: &[u8], ikm: &[u8]) -> [u8; 32] {
+    let mut key = [0u8; 32];
+    
+    if salt.len() == 32 {
+        key.copy_from_slice(salt);
+    }
+
+    mac(&key, ikm)
+}
+
+// Etend la PRK en clés de taille arbitraire (ici fixé à 32 octets) avec un contexte (info)
+// info est une chaîne de caractères (ex: b"handshake_mac", b"session_kcs", etc.)
+// info garantit que les clés (de session, de signature, etc.) seront complètement différentes
+pub fn hkdf_expand(prk: &[u8; 32], info: &[u8]) -> [u8; 32] {
+    let mut input = info.to_vec();
+    input.push(0x01);   // Génération sous forme de blocs HMAC-SHA256 (32 octets) imposée par le standard HKDF
+                        // ex: b"session_kcs\x01"
+    mac(prk, &input).try_into().unwrap_or([0u8; 32])
+}

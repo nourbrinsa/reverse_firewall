@@ -105,17 +105,36 @@ impl Firewall {
         let r = crypto::xor_32(&session.rf, &msg.rs);   // R = R_f XOR R_s
         let nc_tilde_xor_rs = crypto::xor_32(&session.nc_tilde, &msg.rs);
 
-        let mut transcript = Vec::new();
-        transcript.extend_from_slice(&nc_tilde_xor_rs);
-        transcript.extend_from_slice(&msg.ns);
-        transcript.extend_from_slice(&crypto::concat_points(&[&msg.big_y, &msg.big_d, &x_gamma1, &c_gamma2]));
+        // Transcription côté serveur (pour vérifier le MAC du serveur)
+        let mut server_transcript = Vec::new();
+        server_transcript.extend_from_slice(&nc_tilde_xor_rs);
+        server_transcript.extend_from_slice(&msg.ns);
+        server_transcript.extend_from_slice(&crypto::concat_points(&[&msg.big_y, &msg.big_d, &x_gamma1, &c_gamma2]));
 
         self.pk_server
-            .verify(&transcript, &msg.signature)
+            .verify(&server_transcript, &msg.signature)
             .map_err(|_| "signature du serveur invalide".to_string())?;
 
-        let kcfs_point = (session.c * gamma2) * msg.big_d;
-        session.kcfs = Some(crypto::kdf(&kcfs_point));
+        let dh_kcfs_point = (session.c * gamma2) * msg.big_d;
+        let prk_kcfs = crypto::hkdf_extract(&[], crypto::kdf(&dh_kcfs_point).as_ref());
+        let handshake_key = crypto::hkdf_expand(&prk_kcfs, b"handshake_mac");
+
+        let expected_mac = crypto::mac(&handshake_key, &server_transcript);
+        if expected_mac[..] != msg.mac_finished[..] {
+            return Err("MAC finished du serveur est invalide".to_string());
+        }
+
+        // Transcription côté client
+        let nc_xor_r = crypto::xor_32(&crypto::xor_32(&session.nc_tilde, &session.rf), &r); // Reconstruit N_c XOR R
+        let mut client_transcript = Vec::new();
+        client_transcript.extend_from_slice(&nc_xor_r);
+        client_transcript.extend_from_slice(&msg.ns);
+        client_transcript.extend_from_slice(&crypto::concat_points(&[&msg.big_y, &msg.big_d, &x_gamma1, &c_gamma2]));
+
+        let mac_finished_client = crypto::mac(&handshake_key, &client_transcript).try_into().unwrap();
+
+        // HKDF pour kcfs
+        session.kcfs = Some(crypto::hkdf_expand(&prk_kcfs, b"session_kcfs"));
 
         Ok(FirewallToClient {
             ns: msg.ns, r,
@@ -124,6 +143,7 @@ impl Firewall {
             gamma1,
             gamma2,
             signature: msg.signature,
+            mac_finished: mac_finished_client,
         })
     }
 

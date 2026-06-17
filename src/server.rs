@@ -63,13 +63,19 @@ impl Server {
         
         let signature = self.sk.sign(&transcript);
 
-        let kcs_point  = (y * beta1) * msg.big_x_tilde;
-        let kcfs_point = (d * beta2) * msg.big_c_tilde;
+        let dh_secret_kcs = (y * beta1) * msg.big_x_tilde;
+        let dh_secret_kcfs = (d * beta2) * msg.big_c_tilde;
 
-        self.kcs  = Some(crypto::kdf(&kcs_point));
-        self.kcfs = Some(crypto::kdf(&kcfs_point));
+        let prk_kcs = crypto::hkdf_extract(&[], crypto::kdf(&dh_secret_kcs).as_ref());
+        let prk_kcfs = crypto::hkdf_extract(&[], crypto::kdf(&dh_secret_kcfs).as_ref());
 
-        ServerResponse { ns, rs, big_y, big_d, beta1, beta2, signature }
+        let handshake_key = crypto::hkdf_expand(&prk_kcfs, b"handshake_mac");
+        let mac_finished = crypto::mac(&handshake_key, &transcript).try_into().unwrap();
+
+        self.kcs  = Some(crypto::hkdf_expand(&prk_kcs, b"session_kcs"));
+        self.kcfs = Some(crypto::hkdf_expand(&prk_kcfs, b"session_kcfs"));
+
+        ServerResponse { ns, rs, big_y, big_d, beta1, beta2, signature, mac_finished }
     }
 
     pub fn process_record_message(
