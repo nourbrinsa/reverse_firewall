@@ -54,20 +54,6 @@ fn de_sig<'de, D: Deserializer<'de>>(d: D) -> Result<Signature, D::Error> {
     Ok(Signature::from_bytes(&bytes))
 }
 
-// ---------------------------------------------------------------------------
-// Helpers de sérialisation : VerifyingKey ↔ [u8; 32]
-// ---------------------------------------------------------------------------
-
-fn ser_vk<S: Serializer>(vk: &ed25519_dalek::VerifyingKey, s: S) -> Result<S::Ok, S::Error> {
-    vk.to_bytes().serialize(s)
-}
-
-fn de_vk<'de, D: Deserializer<'de>>(d: D) -> Result<ed25519_dalek::VerifyingKey, D::Error> {
-    let bytes = <[u8; 32]>::deserialize(d)?;
-    ed25519_dalek::VerifyingKey::from_bytes(&bytes)
-        .map_err(|e| D::Error::custom(format!("VerifyingKey invalide : {}", e)))
-}
-
 // ===========================================================================
 //  Messages du handshake (Fig. 3)
 // ===========================================================================
@@ -133,24 +119,3 @@ pub struct RecordMessage {
     pub s: Vec<u8>,
     pub t: [u8; 32],
 }
-
-// ===========================================================================
-//  Messages de bootstrap (échange de clés publiques au démarrage)
-// ===========================================================================
-
-/// Envoyé par le Server au Firewall à la connexion.
-#[derive(Serialize, Deserialize)]
-pub struct ServerHello {
-    #[serde(serialize_with = "ser_vk", deserialize_with = "de_vk")]
-    pub pk_server: ed25519_dalek::VerifyingKey,
-}
-
-/// Envoyé par le Firewall au Client : relai de pk_server + pk_fw.
-#[derive(Serialize, Deserialize)]
-pub struct FirewallHello {
-    #[serde(serialize_with = "ser_point", deserialize_with = "de_point")]
-    pub pk_fw: RistrettoPoint,
-    #[serde(serialize_with = "ser_vk", deserialize_with = "de_vk")]
-    pub pk_server: ed25519_dalek::VerifyingKey,
-}
-

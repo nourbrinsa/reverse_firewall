@@ -237,6 +237,8 @@ generate_pki_once() {
   install -m 644 "$FULL_PKI_DIR/ca.crt" "$STAGE_DIR/firewall/pki/ca.crt"
   install -m 644 "$FULL_PKI_DIR/firewall.crt" "$STAGE_DIR/firewall/pki/firewall.crt"
   install -m 600 "$FULL_PKI_DIR/firewall.key" "$STAGE_DIR/firewall/pki/firewall.key"
+  install -m 644 "$FULL_PKI_DIR/server.crt" "$STAGE_DIR/firewall/pki/server.crt"
+  install -m 644 "$FULL_PKI_DIR/server_pub.pem" "$STAGE_DIR/firewall/pki/server_pub.pem"
 
   # Client: aucun secret. Il reçoit les certificats et la clé publique serveur.
   install -m 644 "$FULL_PKI_DIR/ca.crt" "$STAGE_DIR/client/pki/ca.crt"
@@ -267,6 +269,8 @@ deploy_pki() {
   local_install_pki_file "$STAGE_DIR/firewall/pki/ca.crt" "$RF_APP_DIR/pki/ca.crt" 644
   local_install_pki_file "$STAGE_DIR/firewall/pki/firewall.crt" "$RF_APP_DIR/pki/firewall.crt" 644
   local_install_pki_file "$STAGE_DIR/firewall/pki/firewall.key" "$RF_APP_DIR/pki/firewall.key" 600
+  local_install_pki_file "$STAGE_DIR/firewall/pki/server.crt" "$RF_APP_DIR/pki/server.crt" 644
+  local_install_pki_file "$STAGE_DIR/firewall/pki/server_pub.pem" "$RF_APP_DIR/pki/server_pub.pem" 644
 
   log "Déploiement PKI vers Client"
   remote_mkdir_secure "$client_target" "$CLIENT_APP_DIR"

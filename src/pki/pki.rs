@@ -250,6 +250,28 @@ pub fn load_firewall_keys(pki_dir: &Path) -> Result<FirewallKeys, PkiError> {
     Ok(FirewallKeys { sk_fw, pk_fw })
 }
 
+/// Charge et vérifie pk_server depuis la PKI, côté Firewall.
+///
+/// Fichiers requis :
+///   - `pki_dir/ca.crt`
+///   - `pki_dir/server.crt`
+///   - `pki_dir/server_pub.pem`
+pub fn load_server_pk_for_firewall(pki_dir: &Path) -> Result<VerifyingKey, PkiError> {
+    let ca_crt_path = pki_dir.join("ca.crt");
+    let server_crt_path = pki_dir.join("server.crt");
+
+    println!("[PKI] Vérification du certificat serveur (côté firewall)...");
+    verify_cert(&ca_crt_path, &server_crt_path)?;
+
+    let server_pub_pem_path = pki_dir.join("server_pub.pem");
+    let server_pk_bytes = read_ed25519_public_key(&server_pub_pem_path)?;
+    let pk_server = VerifyingKey::from_bytes(&server_pk_bytes)
+        .map_err(|e| pki_err!("pk_server invalide : {}", e))?;
+
+    println!("[PKI] pk_server vérifiée et chargée (côté firewall)");
+    Ok(pk_server)
+}
+
 /// Construit le bundle de confiance pour le Client.
 ///
 /// Le client ne possède pas de clé privée : il reçoit (et vérifie) les

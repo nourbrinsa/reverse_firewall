@@ -30,19 +30,13 @@ impl Firewall {
         Firewall { sk_fw, pk_fw, pk_server }
     }
 
-    /// Constructeur PKI : charge les clés depuis les fichiers générés par
-    /// setup_pki.sh. Appelé par firewall_bin.rs au démarrage.
-    ///
-    /// pk_server est transmis par le serveur via ServerHello au moment
-    /// de la connexion (et vérifié par la CA côté client via load_client_trust_bundle).
-    pub fn from_pki(
-        pki_dir: &std::path::Path,
-        pk_server: VerifyingKey,
-    ) -> Result<Self, crate::pki::PkiError> {
+    /// Constructeur PKI : charge les clés du firewall ET pk_server, tous
+    /// deux depuis les fichiers locaux générés par setup_pki.sh / déployés
+    /// par le script de déploiement
+    pub fn from_pki(pki_dir: &std::path::Path) -> Result<Self, crate::pki::PkiError> {
         let keys = crate::pki::load_firewall_keys(pki_dir)?;
+        let pk_server = crate::pki::load_server_pk_for_firewall(pki_dir)?;
 
-        // Publier pk_fw dans un fichier .bin que le client pourra lire
-        // après avoir vérifié le certificat du firewall.
         crate::pki::publish_firewall_pk(pki_dir, &keys.pk_fw)?;
 
         Ok(Firewall {

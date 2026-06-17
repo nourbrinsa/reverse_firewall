@@ -1,8 +1,7 @@
 //! Binaire Client : vérifie les clés publiques via la PKI avant de les utiliser.
 //!
 //! Démarrage :
-//!   PKI_DIR=./pki CLIENT_ADDR=127.0.0.1:8080 cargo run --bin client
-//!
+//! cargo run --bin client
 //! Prérequis : setup_pki.sh exécuté, server et firewall déjà démarrés.
 
 use rand::rngs::OsRng;
@@ -39,31 +38,7 @@ fn main() -> std::io::Result<()> {
     let mut stream = TcpStream::connect(&cfg.firewall_addr)?;
     println!("[Client] Connecté");
 
-    // ── Réception de FirewallHello ─────────────────────────────────────────
-    // Le Firewall nous envoie (pk_fw, pk_server) en clair.
-    // On vérifie que ces valeurs correspondent à ce que la PKI nous a fourni.
-    // Si elles diffèrent, un imposteur se fait passer pour le Firewall.
-    let hello: messages::FirewallHello = net::recv_msg(&mut stream)?;
-
-    // ── Vérification PKI des clés reçues ──────────────────────────────────
-    if hello.pk_server != trust.pk_server {
-        eprintln!("[Client] ALERTE : pk_server reçue ne correspond pas au certificat PKI !");
-        eprintln!("  Reçue   : {:?}", hello.pk_server.to_bytes());
-        eprintln!("  Attendue: {:?}", trust.pk_server.to_bytes());
-        std::process::exit(1);
-    }
-    if hello.pk_fw.compress().to_bytes() != trust.pk_fw.compress().to_bytes() {
-        eprintln!("[Client] ALERTE : pk_fw reçue ne correspond pas au certificat PKI !");
-        std::process::exit(1);
-    }
-    println!("[Client] pk_server et pk_fw vérifiées — identiques à la PKI ✓");
-
-    // ── Initialisation du Client avec les clés certifiées ─────────────────
-    // On utilise trust.pk_fw et trust.pk_server (issus de la PKI)
-    // plutôt que hello.pk_fw et hello.pk_server (reçus du réseau),
-    // même si on vient de vérifier qu'ils sont identiques.
-    // C'est la bonne pratique : ne jamais utiliser directement ce qui vient
-    // du réseau, mais toujours la version certifiée.
+    // pk_fw et pk_server viennent déjà de la PKI.
     let mut client = client::Client::new(trust.pk_fw, trust.pk_server, &mut rng);
 
     // ── Handshake ─────────────────────────────────────────────────────────

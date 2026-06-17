@@ -31,13 +31,7 @@ fn main() -> std::io::Result<()> {
     let (mut stream, addr) = listener.accept()?;
     println!("[Server] Connexion depuis {}", addr);
 
-    // ── Étape 0 : Envoyer pk_server au Firewall ────────────────────────────
-    // Le Firewall transmet ensuite pk_server au Client via FirewallHello.
-    // Le Client vérifie l'authenticité de pk_server via le certificat CA.
-    net::send_msg(&mut stream, &messages::ServerHello { pk_server: server.pk })?;
-    println!("[Server] pk_server envoyée au Firewall");
-
-    // ── Étape 3 : Réception de (X̃, C̃, ẽ) depuis le Firewall ───────────────
+    // ── Réception de (X̃, C̃, ẽ) depuis le Firewall ───────────────
     let fw_to_server: messages::FirewallToServer = net::recv_msg(&mut stream)?;
     println!("[Server] FirewallToServer reçu");
 
