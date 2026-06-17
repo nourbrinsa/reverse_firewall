@@ -13,7 +13,7 @@ use reverse_firewall::{config, firewall, messages, net};
 
 fn main() -> std::io::Result<()> {
     let cfg = config::FirewallConfig::from_env();
-    let pki_dir = PathBuf::from(std::env::var("PKI_DIR").unwrap_or_else(|_| "pki".to_string()));
+    let pki_dir = PathBuf::from("pki");
     let mut rng = OsRng;
 
     // ── Étape 1 : Connexion au Serveur ─────────────────────────────────────
