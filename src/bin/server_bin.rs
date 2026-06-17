@@ -12,7 +12,7 @@ use reverse_firewall::{config, messages, net, server};
 
 fn main() -> std::io::Result<()> {
     let cfg = config::ServerConfig::from_env();
-    let pki_dir = PathBuf::from(std::env::var("PKI_DIR").unwrap_or_else(|_| "pki".to_string()));
+    let pki_dir = PathBuf::from("pki");
     let mut rng = OsRng;
 
     // ── Chargement des clés depuis la PKI (vérifie le certificat CA) ──────
