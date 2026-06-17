@@ -153,4 +153,34 @@ pub struct FirewallHello {
     #[serde(serialize_with = "ser_vk", deserialize_with = "de_vk")]
     pub pk_server: ed25519_dalek::VerifyingKey,
 }
+/// Message direct Client -> Server (sans firewall, cf Fig. 2).
+#[derive(Serialize, Deserialize)]
+pub struct ClientInitDirect {
+    #[serde(serialize_with = "ser_point", deserialize_with = "de_point")]
+    pub big_x: RistrettoPoint,
+    #[serde(serialize_with = "ser_point", deserialize_with = "de_point")]
+    pub big_c: RistrettoPoint,
+}
 
+/// Reponse directe Server -> Client (sans firewall, cf Fig. 2).
+#[derive(Serialize, Deserialize)]
+pub struct ServerResponseDirect {
+    #[serde(serialize_with = "ser_point", deserialize_with = "de_point")]
+    pub big_y: RistrettoPoint,
+    #[serde(serialize_with = "ser_point", deserialize_with = "de_point")]
+    pub big_d: RistrettoPoint,
+    #[serde(serialize_with = "ser_scalar", deserialize_with = "de_scalar")]
+    pub beta1: Scalar,
+    #[serde(serialize_with = "ser_scalar", deserialize_with = "de_scalar")]
+    pub beta2: Scalar,
+    #[serde(serialize_with = "ser_sig", deserialize_with = "de_sig")]
+    pub signature: Signature,
+}
+
+/// Message de la couche record en mode direct (sans firewall) :
+/// AEAD simple avec kcs, pas de couche kcfs.
+#[derive(Serialize, Deserialize)]
+pub struct DirectRecord {
+    pub seq: u64,
+    pub ciphertext: Vec<u8>,
+}

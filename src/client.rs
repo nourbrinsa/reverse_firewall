@@ -4,7 +4,7 @@ use ed25519_dalek::{Verifier, VerifyingKey};
 use rand::RngCore;
 
 use crate::crypto;
-use crate::messages::{ClientInit, FirewallToClient};
+use crate::messages::{ClientInit, FirewallToClient, ClientInitDirect, ServerResponseDirect};
 
 pub struct Client {
     /// Secrets ephemeres x et c (cf "x, c <- Zp" dans Fig. 3).
@@ -58,6 +58,21 @@ impl Client {
         }
     }
 
+    /// Construit le message direct vers le Serveur : (X, C), sans e.
+    /// Reference : Fig. 2, premiere fleche Client -> Server (sans firewall).
+    pub fn init_message_direct(&self) -> ClientInitDirect {
+        // Etape 1 : X = g^x
+        let big_x = crypto::base_point(&self.x);
+
+        // Etape 2 : C = g^c
+        let big_c = crypto::base_point(&self.c);
+
+        ClientInitDirect {
+            big_x,
+            big_c,
+        }
+    }
+
     /// Traite la reponse finale du Firewall : (sigma, Y, D, gamma1, gamma2).
     pub fn finalize(&mut self, msg: FirewallToClient) -> Result<(), String> {
         // Etape 1 : reconstruire le transcript signe (Y, D, X^gamma1, C^gamma2)
@@ -83,6 +98,26 @@ impl Client {
 
         self.kcs = Some(crypto::kdf(&kcs_point));
         self.kcfs = Some(crypto::kdf(&kcfs_point));
+
+        Ok(())
+    }
+
+    /// Traite la reponse directe du Serveur : (sigma, Y, D, beta1, beta2).
+    /// Reference : Fig. 2, derniere fleche Server -> Client.
+    /// Ne calcule que kcs ; kcfs reste None car il n'y a pas de firewall.
+    pub fn finalize_direct(&mut self, msg: ServerResponseDirect) -> Result<(), String> {
+        let x_beta1 = crypto::base_point(&(self.x * msg.beta1));
+        let c_beta2  = crypto::base_point(&(self.c * msg.beta2));
+
+        let transcript = crypto::concat_points(&[&msg.big_y, &msg.big_d, &x_beta1, &c_beta2]);
+
+        self.pk_server
+            .verify(&transcript, &msg.signature)
+            .map_err(|e| format!("Signature invalide : {}", e))?;
+
+        let kcs_point = (self.x * msg.beta1) * msg.big_y;
+        self.kcs = Some(crypto::kdf(&kcs_point));
+        // kcfs reste None
 
         Ok(())
     }

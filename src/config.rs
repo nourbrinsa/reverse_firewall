@@ -12,6 +12,10 @@ pub struct ClientConfig {
     pub firewall_addr: String,
 }
 
+pub struct  ClientDirectConfig{
+    pub server_addr:String
+}
+
 impl ServerConfig {
     pub fn from_env() -> Self {
         Self {
@@ -37,6 +41,15 @@ impl ClientConfig {
         Self {
             firewall_addr: std::env::var("CLIENT_ADDR")
                 .unwrap_or_else(|_| "127.0.0.1:8081".to_string()),
+        }
+    }
+}
+
+impl ClientDirectConfig {
+    pub fn from_env() -> Self {
+        Self {
+            server_addr: std::env::var("CLIENT_ADDR")
+                .unwrap_or_else(|_| "127.0.0.1:9090".to_string()),
         }
     }
 }

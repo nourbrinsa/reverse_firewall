@@ -74,6 +74,12 @@ pub struct ClientTrustBundle {
     pub pk_fw: RistrettoPoint,
 }
 
+/// Bundle de confiance pour le Client en mode SANS firewall.
+/// Ne contient que pk_server — pas de pk_fw puisqu'il n'y a pas de firewall.
+pub struct ClientTrustBundleDirect {
+    pub pk_server: VerifyingKey,
+}
+
 // ---------------------------------------------------------------------------
 // Utilitaires internes — Parsing sécurisé avec rustls-pemfile, pkcs8 et spki
 // ---------------------------------------------------------------------------
@@ -310,6 +316,37 @@ pub fn load_client_trust_bundle(pki_dir: &Path) -> Result<ClientTrustBundle, Pki
 
     println!("[PKI] Clé publique firewall (Ristretto) chargée");
     Ok(ClientTrustBundle { pk_server, pk_fw })
+}
+
+/// Construit le bundle de confiance pour le Client en mode direct (sans firewall).
+///
+/// Contrairement à `load_client_trust_bundle`, cette fonction ne requiert
+/// ni firewall.crt ni firewall_pk_ristretto.bin — uniquement la chaîne de
+/// confiance du serveur.
+///
+/// Fichiers requis :
+///   - `pki_dir/ca.crt`          — certificat de la CA
+///   - `pki_dir/server.crt`      — certificat du serveur
+///   - `pki_dir/server_pub.pem`  — clé publique Ed25519 du serveur
+pub fn load_client_trust_bundle_direct(pki_dir: &Path) -> Result<ClientTrustBundleDirect, PkiError> {
+    let ca_crt_path = pki_dir.join("ca.crt");
+    let server_crt_path = pki_dir.join("server.crt");
+
+    println!("[PKI] Chargement du bundle de confiance client (mode direct, sans firewall)...");
+
+    // 1. Vérifier la signature du certificat serveur auprès de la CA
+    println!("[PKI] Vérification du certificat serveur...");
+    verify_cert(&ca_crt_path, &server_crt_path)?;
+    println!("[PKI] Certificat serveur OK — signature valide");
+
+    // 2. Extraire la clé publique Ed25519 du serveur
+    let server_pub_pem_path = pki_dir.join("server_pub.pem");
+    let server_pk_bytes = read_ed25519_public_key(&server_pub_pem_path)?;
+    let pk_server = VerifyingKey::from_bytes(&server_pk_bytes)
+        .map_err(|e| pki_err!("pk_server invalide : {}", e))?;
+    println!("[PKI] Clé publique serveur chargée (Ed25519)");
+
+    Ok(ClientTrustBundleDirect { pk_server })
 }
 
 /// Appelé par le Firewall après avoir chargé ses clés : publie pk_fw

@@ -6,13 +6,19 @@ edition = "2021"
 [[bin]]
 name = "client_bin"
 path = "src/bin/with-firewall/client_bin.rs"
-
 [[bin]]
 name = "firewall_bin"
 path = "src/bin/with-firewall/firewall_bin.rs"
 [[bin]]
 name = "server_bin"
 path = "src/bin/with-firewall/server_bin.rs"
+
+[[bin]]
+name = "client_direct"
+path = "src/bin/without-firewall/client_bin.rs"
+[[bin]]
+name = "server_direct"
+path = "src/bin/without-firewall/server_bin.rs"
 
 [dependencies]
 

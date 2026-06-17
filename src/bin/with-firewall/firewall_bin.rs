@@ -1,9 +1,7 @@
 //! Binaire Firewall : charge ses clés depuis la PKI au lieu de les générer.
 //!
 //! Démarrage :
-//!   PKI_DIR=./pki FIREWALL_LISTEN=0.0.0.0:8080 FIREWALL_SERVER_ADDR=127.0.0.1:9090 \
-//!   cargo run --bin firewall
-//!
+//!  cargo run --bin firewall
 //! Prérequis : setup_pki.sh exécuté, server déjà démarré.
 
 use rand::rngs::OsRng;
@@ -80,7 +78,6 @@ fn main() -> std::io::Result<()> {
 
     net::send_msg(&mut client_stream, &fw_to_client)?;
     println!("[Firewall] FirewallToClient envoyé — handshake terminé");
-    println!("[Firewall] kcfs = {:?}", session.kcfs);
 
     // ── Boucle record layer ────────────────────────────────────────────────
     let kcfs = session.kcfs.expect("kcfs manquant après handshake");

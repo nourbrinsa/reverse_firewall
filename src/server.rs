@@ -2,7 +2,7 @@ use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use rand::RngCore;
 
 use crate::crypto;
-use crate::messages::{FirewallToServer, RecordMessage, ServerResponse};
+use crate::messages::{FirewallToServer, RecordMessage, ServerResponse, ClientInitDirect,ServerResponseDirect};
 
 pub struct Server {
     sk: SigningKey,
@@ -87,5 +87,33 @@ impl Server {
             .collect();
 
         crypto::ae_decrypt(&kcs, seq, &c_bytes)
+    }
+
+    /// Traite le message direct (X, C) recu du Client (sans firewall).
+    /// Reference : Fig. 2, etape du Serveur sans firewall.
+    /// Ne calcule que kcs ; kcfs reste None.
+    pub fn process_client_direct(
+        &mut self,
+        msg: ClientInitDirect,
+        rng: &mut impl RngCore,
+    ) -> ServerResponseDirect {
+        let y     = crypto::random_scalar(rng);
+        let d     = crypto::random_scalar(rng);
+        let beta1 = crypto::random_scalar(rng);
+        let beta2 = crypto::random_scalar(rng);
+
+        let big_y = crypto::base_point(&y);
+        let big_d = crypto::base_point(&d);
+
+        let x_beta1 = beta1 * msg.big_x;
+        let c_beta2  = beta2 * msg.big_c;
+        let transcript = crypto::concat_points(&[&big_y, &big_d, &x_beta1, &c_beta2]);
+        let signature = self.sk.sign(&transcript);
+
+        let kcs_point = (y * beta1) * msg.big_x;
+        self.kcs = Some(crypto::kdf(&kcs_point));
+        // kcfs reste None
+
+        ServerResponseDirect { big_y, big_d, beta1, beta2, signature }
     }
 }

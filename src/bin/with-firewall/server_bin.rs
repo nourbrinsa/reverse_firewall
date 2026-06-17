@@ -1,7 +1,7 @@
 //! Binaire Serveur : charge ses clés depuis la PKI au lieu de les générer.
 //!
 //! Démarrage :
-//!   PKI_DIR=./pki SERVER_ADDR=0.0.0.0:9090 cargo run --bin server
+//!   cargo run --bin server
 //!
 //! Prérequis : avoir exécuté setup_pki.sh au préalable.
 
@@ -46,8 +46,6 @@ fn main() -> std::io::Result<()> {
     net::send_msg(&mut stream, &response)?;
     println!("[Server] Réponse signée envoyée");
     println!("[Server] Handshake terminé");
-    println!("[Server] kcs  = {:?}", server.kcs);
-    println!("[Server] kcfs = {:?}", server.kcfs);
 
     // ── Boucle record layer ────────────────────────────────────────────────
     let mut seq = 0u64;
