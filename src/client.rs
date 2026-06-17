@@ -20,6 +20,9 @@ pub struct Client {
     /// Cles de session, calculees a la fin du handshake (Some apres `finalize`).
     pub kcs: Option<[u8; 32]>,
     pub kcfs: Option<[u8; 32]>,
+
+    /// Nonce du client N_c
+    nc: [u8; 32],
 }
 
 impl Client {
@@ -35,23 +38,28 @@ impl Client {
             pk_server,
             kcs: None,
             kcfs: None,
+            nc: [0u8; 32],   // initialisé à 0, rempli dans init_message
         }
     }
 
     /// Construit le premier message envoye au Firewall : (X, C, e).
-    pub fn init_message(&self, rng: &mut impl RngCore) -> ClientInit {
-        // Etape 1 : X = g^x
+    pub fn init_message(&mut self, rng: &mut impl RngCore) -> ClientInit {
+        // Etape 1 : N_c <- {0, 1}^lambda
+        rng.fill_bytes(&mut self.nc);
+
+        // Etape 2 : X = g^x
         let big_x = crypto::base_point(&self.x);
 
-        // Etape 2 : C = g^c
+        // Etape 3 : C = g^c
         let big_c = crypto::base_point(&self.c);
 
-        // Etape 3 : e = ElGamal(pkFW, c·G)
+        // Etape 4 : e = ElGamal(pkFW, c·G)
         // On chiffre le point C lui-meme (= c·G), le firewall pourra
         // verifier apres dechiffrement que le resultat est bien egal a C.
         let enc_c = crypto::elgamal_encrypt(&self.pk_fw, &self.c.to_bytes(), rng);
 
         ClientInit {
+            nc : self.nc,
             big_x,
             big_c,
             enc_c,
@@ -66,13 +74,18 @@ impl Client {
         // C^gamma2 = g^(c*gamma2) car C = g^c
         let c_gamma2 = crypto::base_point(&(self.c * msg.gamma2));
 
-        let transcript_bytes =
-            crypto::concat_points(&[&msg.big_y, &msg.big_d, &x_gamma1, &c_gamma2]);
+        // N_c XOR R
+        let nc_xor_r = crypto::xor_32(&self.nc, &msg.r);
+
+        let mut transcript = Vec::new();
+        transcript.extend_from_slice(&nc_xor_r);
+        transcript.extend_from_slice(&msg.ns);
+        transcript.extend_from_slice(&crypto::concat_points(&[&msg.big_y, &msg.big_d, &x_gamma1, &c_gamma2]));
 
         // Etape 2 : verifier la signature
         // Si invalide -> abort (cf Fig. 3 "Else: abort")
         self.pk_server
-            .verify(&transcript_bytes, &msg.signature)
+            .verify(&transcript, &msg.signature)
             .map_err(|e| format!("Signature invalide : {}", e))?;
 
         // Etape 3 : calculer kcs et kcfs

@@ -1,5 +1,5 @@
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
-use rand::RngCore;
+use rand::{Rng, RngCore};
 
 use crate::crypto;
 use crate::messages::{FirewallToServer, RecordMessage, ServerResponse};
@@ -39,6 +39,11 @@ impl Server {
         msg: FirewallToServer,
         rng: &mut impl RngCore,
     ) -> ServerResponse {
+        let mut ns = [0u8; 32];
+        let mut rs = [0u8; 32];
+        rng.fill_bytes(&mut ns);    // N_s <- {0, 1}^lambda
+        rng.fill_bytes(&mut rs);    // R_s <- {0, 1}^lambda
+
         let y     = crypto::random_scalar(rng);
         let d     = crypto::random_scalar(rng);
         let beta1 = crypto::random_scalar(rng);
@@ -46,13 +51,16 @@ impl Server {
 
         let big_y = crypto::base_point(&y);
         let big_d = crypto::base_point(&d);
-
         let x_tilde_beta1 = beta1 * msg.big_x_tilde;
         let c_tilde_beta2 = beta2 * msg.big_c_tilde;
 
-        let transcript = crypto::concat_points(
-            &[&big_y, &big_d, &x_tilde_beta1, &c_tilde_beta2]
-        );
+        let nc_tilde_xor_rs = crypto::xor_32(&msg.nc_tilde, &rs);
+
+        let mut transcript = Vec::new();
+        transcript.extend_from_slice(&nc_tilde_xor_rs);
+        transcript.extend_from_slice(&ns);
+        transcript.extend_from_slice(&crypto::concat_points(&[&big_y, &big_d, &x_tilde_beta1, &c_tilde_beta2]));
+        
         let signature = self.sk.sign(&transcript);
 
         let kcs_point  = (y * beta1) * msg.big_x_tilde;
@@ -61,7 +69,7 @@ impl Server {
         self.kcs  = Some(crypto::kdf(&kcs_point));
         self.kcfs = Some(crypto::kdf(&kcfs_point));
 
-        ServerResponse { signature, big_y, big_d, beta1, beta2 }
+        ServerResponse { ns, rs, big_y, big_d, beta1, beta2, signature }
     }
 
     pub fn process_record_message(

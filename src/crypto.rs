@@ -122,3 +122,12 @@ pub fn ae_decrypt(key: &[u8; 32], seq: u64, ciphertext: &[u8]) -> Result<Vec<u8>
     cipher.decrypt(nonce, ciphertext)
         .map_err(|_| "échec AEAD".to_string())
 }
+
+// Effectue un XOR entre deux tableaux de 32 octets
+pub fn xor_32(a: &[u8; 32], b: &[u8; 32]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    for i in 0..32 {
+        out[i] = a[i] ^ b[i];
+    }
+    out
+}

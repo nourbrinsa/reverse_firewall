@@ -19,6 +19,8 @@ pub struct FirewallSession {
     big_x: RistrettoPoint,
     big_c: RistrettoPoint,
     pub kcfs: Option<[u8; 32]>,
+    rf: [u8; 32],               // aléa R_f choisi par le firewall
+    nc_tilde: [u8; 32],         // nonce du client rerandomisé par le firewall
 }
 
 impl Firewall {
@@ -67,18 +69,23 @@ impl Firewall {
         let alpha1 = crypto::random_scalar(rng);
         let alpha2 = crypto::random_scalar(rng);
 
+        let mut rf = [0u8; 32];
+        rng.fill_bytes(&mut rf);
+        let nc_tilde = crypto::xor_32(&msg.nc, &rf);    // Nc_tilde = N_c XOR R_f
+
         let big_x_tilde = alpha1 * msg.big_x;
         let big_c_tilde = alpha2 * msg.big_c;
 
         let c_tilde = c * alpha2;
         let enc_c_tilde = crypto::elgamal_encrypt(&self.pk_fw, &c_tilde.to_bytes(), rng);
 
-        let fw_to_server = FirewallToServer { big_x_tilde, big_c_tilde, enc_c_tilde };
+        let fw_to_server = FirewallToServer { nc_tilde, big_x_tilde, big_c_tilde, enc_c_tilde };
         let session = FirewallSession {
             alpha1, alpha2, c,
             big_x: msg.big_x,
             big_c: msg.big_c,
             kcfs: None,
+            rf, nc_tilde,
         };
 
         Ok((fw_to_server, session))
@@ -94,7 +101,14 @@ impl Firewall {
 
         let x_gamma1 = gamma1 * session.big_x;
         let c_gamma2 = gamma2 * session.big_c;
-        let transcript = crypto::concat_points(&[&msg.big_y, &msg.big_d, &x_gamma1, &c_gamma2]);
+
+        let r = crypto::xor_32(&session.rf, &msg.rs);   // R = R_f XOR R_s
+        let nc_tilde_xor_rs = crypto::xor_32(&session.nc_tilde, &msg.rs);
+
+        let mut transcript = Vec::new();
+        transcript.extend_from_slice(&nc_tilde_xor_rs);
+        transcript.extend_from_slice(&msg.ns);
+        transcript.extend_from_slice(&crypto::concat_points(&[&msg.big_y, &msg.big_d, &x_gamma1, &c_gamma2]));
 
         self.pk_server
             .verify(&transcript, &msg.signature)
@@ -104,6 +118,7 @@ impl Firewall {
         session.kcfs = Some(crypto::kdf(&kcfs_point));
 
         Ok(FirewallToClient {
+            ns: msg.ns, r,
             big_y: msg.big_y,
             big_d: msg.big_d,
             gamma1,

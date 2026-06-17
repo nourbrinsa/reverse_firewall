@@ -75,6 +75,7 @@ fn de_vk<'de, D: Deserializer<'de>>(d: D) -> Result<ed25519_dalek::VerifyingKey,
 /// Message 1 : Client -> Firewall  (X, C, e)
 #[derive(Serialize, Deserialize)]
 pub struct ClientInit {
+    pub nc: [u8; 32],       // nonce du client
     #[serde(serialize_with = "ser_point", deserialize_with = "de_point")]
     pub big_x: RistrettoPoint,
     #[serde(serialize_with = "ser_point", deserialize_with = "de_point")]
@@ -85,6 +86,7 @@ pub struct ClientInit {
 /// Message 2 : Firewall -> Server  (X̃, C̃, ẽ)
 #[derive(Serialize, Deserialize)]
 pub struct FirewallToServer {
+    pub nc_tilde: [u8; 32], // nonce du client masqué par le firewall
     #[serde(serialize_with = "ser_point", deserialize_with = "de_point")]
     pub big_x_tilde: RistrettoPoint,
     #[serde(serialize_with = "ser_point", deserialize_with = "de_point")]
@@ -95,6 +97,8 @@ pub struct FirewallToServer {
 /// Message 3 : Server -> Firewall  (σ, Y, D, β1, β2)
 #[derive(Serialize, Deserialize)]
 pub struct ServerResponse {
+    pub ns: [u8; 32],       // nonce du serveur
+    pub rs: [u8; 32],       // masque aléatoire généré par le serveur
     #[serde(serialize_with = "ser_point", deserialize_with = "de_point")]
     pub big_y: RistrettoPoint,
     #[serde(serialize_with = "ser_point", deserialize_with = "de_point")]
@@ -110,6 +114,8 @@ pub struct ServerResponse {
 /// Message 4 : Firewall -> Client  (σ, Y, D, γ1, γ2)
 #[derive(Serialize, Deserialize)]
 pub struct FirewallToClient {
+    pub ns: [u8; 32],
+    pub r: [u8; 32],        // R_f XOR R_s
     #[serde(serialize_with = "ser_point", deserialize_with = "de_point")]
     pub big_y: RistrettoPoint,
     #[serde(serialize_with = "ser_point", deserialize_with = "de_point")]
