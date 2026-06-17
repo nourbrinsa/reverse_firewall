@@ -86,7 +86,10 @@ fn main() -> std::io::Result<()> {
     let kcfs = session.kcfs.expect("kcfs manquant après handshake");
     loop {
         let client_record: messages::RecordMessage = match net::recv_msg(&mut client_stream) {
-            Ok(r) => r,
+            Ok(r) => { 
+                println!("[Firewall] Message envoyé au serveur");
+                r
+            },
             Err(e) => { println!("[Firewall] Client déconnecté : {}", e); break; }
         };
 
