@@ -1,9 +1,10 @@
-//! Binaire Client : vérifie les clés publiques via la PKI avant de les utiliser.
+//! Binaire Client : vérifie les clés publiques via les certificats déployés.
 //!
-//! Démarrage :
-//!   PKI_DIR=./pki CLIENT_ADDR=127.0.0.1:8080 cargo run --bin client
+//! Démarrage distribué :
+//!   PKI_DIR=pki CLIENT_ADDR=<rf-ip>:8081 cargo run --bin client_bin
 //!
-//! Prérequis : le script de déploiement PKI a déjà distribué le bundle client.
+//! Le Client ne possède aucun secret. Il lit seulement `ca.crt`, `server.crt`,
+//! `firewall.crt` et `firewall_pk_ristretto.bin`, tous déployés par le script.
 
 use rand::rngs::OsRng;
 use rand::RngCore;
@@ -20,16 +21,16 @@ fn main() -> std::io::Result<()> {
     // ── Chargement du bundle de confiance depuis la PKI ────────────────────
     // load_client_trust_bundle() :
     //   1. Vérifie server.crt et firewall.crt auprès de ca.crt
-    //   2. Extrait pk_server depuis server.crt
+    //   2. Extrait pk_server directement depuis server.crt
     //   3. Lit pk_fw depuis firewall_pk_ristretto.bin
-    //      (généré pendant le provisioning PKI puis distribué au Client)
+    //      (copié par le script de déploiement après démarrage du RF)
     println!("[Client] Vérification des certificats PKI dans {:?}...", pki_dir);
     let trust = pki::load_client_trust_bundle(&pki_dir)
         .unwrap_or_else(|e| {
             eprintln!("[Client] Erreur PKI : {}", e);
             eprintln!("[Client] Assurez-vous que :");
-            eprintln!("  1. Le script de déploiement PKI a été exécuté depuis RF");
-            eprintln!("  2. ca.crt, server.crt, firewall.crt, server_pub.pem et firewall_pk_ristretto.bin existent dans PKI_DIR");
+            eprintln!("  1. Le script de déploiement a distribué ca.crt/server.crt/firewall.crt");
+            eprintln!("  2. Le RF a démarré et le script a copié firewall_pk_ristretto.bin ici");
             std::process::exit(1);
         });
     println!("[Client] PKI OK — pk_server et pk_fw vérifiés par la CA");

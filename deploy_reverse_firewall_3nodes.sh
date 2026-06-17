@@ -6,7 +6,7 @@
 # Hypothèse recommandée:
 #   - exécuter ce script depuis la machine RF;
 #   - RF joue temporairement le rôle de machine de provisioning PKI;
-#   - le code Rust existe déjà sur les 3 machines dans les chemins définis dans .env.
+#   - le code Rust existe déjà sur les 3 machines dans les ch&ns définis dans .env.
 # =============================================================================
 
 set -Eeuo pipefail
@@ -73,7 +73,6 @@ load_config() {
   SERVER_BIN="${SERVER_BIN:-server_bin}"
   FIREWALL_BIN="${FIREWALL_BIN:-firewall_bin}"
   CLIENT_BIN="${CLIENT_BIN:-client_bin}"
-  PKI_EXPORT_BIN="${PKI_EXPORT_BIN:-pki_export_firewall_pk}"
 
   SERVER_PORT="${SERVER_PORT:-9090}"
   FIREWALL_PORT="${FIREWALL_PORT:-8081}"
@@ -131,40 +130,15 @@ local_install_pki_file() {
   install -m "$mode" "$src" "$dst"
 }
 
-usage() {
-  cat <<USAGE
-Usage:
-  ./$(basename "$0") --create-env
-  ./$(basename "$0") --check-config
-  ./$(basename "$0") --init-ssh
-  ./$(basename "$0") --deploy-pki
-  ./$(basename "$0") --run-demo
-  ./$(basename "$0") --all
-  ./$(basename "$0") --clean-runtime
-
-Architecture PKI actuelle:
-  - la PKI complète est générée une seule fois sur RF;
-  - firewall_pk_ristretto.bin est exporté pendant le provisioning;
-  - aucun fichier PKI n'est généré/copied pendant le runtime.
-
-Configuration:
-  3) ./$(basename "$0") --check-config
-  4) ./$(basename "$0") --all
-
-You can use another env file with:
-  ENV_FILE=/path/to/my.env ./$(basename "$0") --all
-USAGE
-}
 
 create_env_files() {
-  local env_example="$SCRIPT_DIR/.env.example"
-  local gitignore="$SCRIPT_DIR/.gitignore"
+  local example_file="$SCRIPT_DIR/.env.example"
+  local gitignore_file="$SCRIPT_DIR/.gitignore"
 
-  if [[ ! -f "$env_example" ]]; then
-    cat > "$env_example" <<'EOF'
-# Reverse Firewall deployment configuration.
-# Copy this file to .env, then replace placeholders with real local values.
-# .env must stay local and must not be committed.
+  if [[ ! -f "$example_file" ]]; then
+    cat > "$example_file" <<'ENVEXAMPLE'
+# Copy this file to .env on the RF machine and replace placeholders.
+# .env is local/private and must never be committed.
 
 SERVER_USER="CHANGE_ME_SERVER_USER"
 SERVER_HOST="CHANGE_ME_SERVER_SSH_IP"
@@ -174,51 +148,60 @@ CLIENT_HOST="CHANGE_ME_CLIENT_SSH_IP"
 SERVER_LAN_IP="CHANGE_ME_SERVER_LAN_IP"
 RF_LAN_IP="CHANGE_ME_RF_LAN_IP"
 
-SERVER_APP_DIR="/home/CHANGE_ME_SERVER_USER/reverse_firewall"
-CLIENT_APP_DIR="/home/CHANGE_ME_CLIENT_USER/reverse_firewall"
-RF_APP_DIR="/home/CHANGE_ME_RF_USER/reverse_firewall"
+SERVER_APP_DIR="/home/CHANGE_ME_SERVER_USER/path/to/reverse_firewall"
+CLIENT_APP_DIR="/home/CHANGE_ME_CLIENT_USER/path/to/reverse_firewall"
+RF_APP_DIR="/home/CHANGE_ME_RF_USER/path/to/reverse_firewall"
 
 SERVER_BIN="server_bin"
 FIREWALL_BIN="firewall_bin"
 CLIENT_BIN="client_bin"
-PKI_EXPORT_BIN="pki_export_firewall_pk"
 
 SERVER_PORT="9090"
 FIREWALL_PORT="8081"
 
 SSH_KEY="$HOME/.ssh/rf_deploy_ed25519"
 SSH_PORT="22"
+
 DEPLOY_ROOT="$HOME/.reverse_firewall_deploy"
-EOF
-    log "Créé: $env_example"
+ENVEXAMPLE
+    chmod 644 "$example_file"
+    log "Created $example_file"
   else
-    warn "$env_example existe déjà"
+    warn "$example_file already exists"
   fi
 
-  if [[ ! -f "$ENV_FILE" ]]; then
-    cp "$env_example" "$ENV_FILE"
-    chmod 600 "$ENV_FILE"
-    log "Créé: $ENV_FILE"
+  if [[ ! -f "$SCRIPT_DIR/.env" ]]; then
+    cp "$example_file" "$SCRIPT_DIR/.env"
+    chmod 600 "$SCRIPT_DIR/.env"
+    log "Created local $SCRIPT_DIR/.env"
   else
-    warn "$ENV_FILE existe déjà"
+    warn "$SCRIPT_DIR/.env already exists"
   fi
 
-  touch "$gitignore"
-  grep -qxF '.env' "$gitignore" || cat >> "$gitignore" <<'EOF'
+  touch "$gitignore_file"
+  for pattern in ".env" "pki/" "logs/" "*.key" "*.crt" "*.csr" "*.srl" "*_pub.pem" "firewall_pk_ristretto.bin" ".reverse_firewall_deploy/"; do
+    grep -qxF "$pattern" "$gitignore_file" || echo "$pattern" >> "$gitignore_file"
+  done
+  log "Updated $gitignore_file"
+}
 
-# Reverse Firewall local deployment secrets/config
-.env
-.reverse_firewall_deploy/
-pki/
-logs/
-*.key
-*.csr
-*.srl
-*.pem
-*.crt
-firewall_pk_ristretto.bin
-EOF
-  log "Vérifiez/éditez maintenant: $ENV_FILE"
+usage() {
+  cat <<USAGE
+Usage:
+  ./$(basename "$0") --check-config
+  ./$(basename "$0") --init-ssh
+  ./$(basename "$0") --deploy-pki
+  ./$(basename "$0") --run-demo
+  ./$(basename "$0") --all
+  ./$(basename "$0") --clean-runtime
+
+Configuration:
+  3) ./$(basename "$0") --check-config
+  4) ./$(basename "$0") --all
+
+You can use another env file with:
+  ENV_FILE=/path/to/my.env ./$(basename "$0") --all
+USAGE
 }
 
 check_config() {
@@ -230,14 +213,11 @@ check_config() {
   [[ -d "$RF_APP_DIR" ]] || { err "RF_APP_DIR introuvable: $RF_APP_DIR"; exit 1; }
   [[ -x "$RF_APP_DIR/setup_pki.sh" ]] || { err "setup_pki.sh introuvable ou non exécutable dans $RF_APP_DIR"; exit 1; }
 
-  log "Test build local RF"
-  (cd "$RF_APP_DIR" && cargo build --bins)
-
   log "Test SSH Server"
-  ssh_base "${SERVER_USER}@${SERVER_HOST}" "hostname && whoami && test -d '$SERVER_APP_DIR' && cd '$SERVER_APP_DIR' && cargo build --bins && echo 'SERVER_APP_DIR OK'"
+  ssh_base "${SERVER_USER}@${SERVER_HOST}" "hostname && whoami && test -d '$SERVER_APP_DIR' && echo 'SERVER_APP_DIR OK'"
 
   log "Test SSH Client"
-  ssh_base "${CLIENT_USER}@${CLIENT_HOST}" "hostname && whoami && test -d '$CLIENT_APP_DIR' && cd '$CLIENT_APP_DIR' && cargo build --bins && echo 'CLIENT_APP_DIR OK'"
+  ssh_base "${CLIENT_USER}@${CLIENT_HOST}" "hostname && whoami && test -d '$CLIENT_APP_DIR' && echo 'CLIENT_APP_DIR OK'"
 
   log "Configuration OK"
 }
@@ -281,7 +261,6 @@ generate_pki_once() {
   require_cmd openssl
   require_cmd scp
   require_cmd ssh
-  require_cmd cargo
 
   [[ -d "$RF_APP_DIR" ]] || { err "RF_APP_DIR introuvable: $RF_APP_DIR"; exit 1; }
   [[ -x "$RF_APP_DIR/setup_pki.sh" ]] || { err "setup_pki.sh introuvable ou non exécutable dans $RF_APP_DIR"; exit 1; }
@@ -293,11 +272,8 @@ generate_pki_once() {
 
   (cd "$RF_APP_DIR" && PKI_DIR="$FULL_PKI_DIR" ./setup_pki.sh)
 
-  log "Export de firewall_pk_ristretto.bin pendant le provisioning PKI"
-  (cd "$RF_APP_DIR" && cargo run --quiet --bin "$PKI_EXPORT_BIN" --     "$FULL_PKI_DIR/firewall.key"     "$FULL_PKI_DIR/firewall_pk_ristretto.bin")
-
   chmod 600 "$FULL_PKI_DIR"/*.key
-  chmod 644 "$FULL_PKI_DIR"/*.crt "$FULL_PKI_DIR"/*_pub.pem "$FULL_PKI_DIR/firewall_pk_ristretto.bin" 2>/dev/null || true
+  chmod 644 "$FULL_PKI_DIR"/*.crt "$FULL_PKI_DIR"/*_pub.pem 2>/dev/null || true
 
   # Garder ca.key hors du dossier runtime. Aucun acteur n'en a besoin pour exécuter le protocole.
   mv "$FULL_PKI_DIR/ca.key" "$CA_PRIVATE_DIR/ca.key"
@@ -317,12 +293,12 @@ generate_pki_once() {
   install -m 644 "$FULL_PKI_DIR/firewall.crt" "$STAGE_DIR/firewall/pki/firewall.crt"
   install -m 600 "$FULL_PKI_DIR/firewall.key" "$STAGE_DIR/firewall/pki/firewall.key"
 
-  # Client: aucun secret. Il reçoit les certificats et les clés publiques nécessaires.
+  # Client: aucun secret. Il reçoit seulement la CA et les certificats.
+  # pk_server est extraite de server.crt par le code client.
+  # firewall_pk_ristretto.bin sera copié après le démarrage du RF.
   install -m 644 "$FULL_PKI_DIR/ca.crt" "$STAGE_DIR/client/pki/ca.crt"
   install -m 644 "$FULL_PKI_DIR/server.crt" "$STAGE_DIR/client/pki/server.crt"
   install -m 644 "$FULL_PKI_DIR/firewall.crt" "$STAGE_DIR/client/pki/firewall.crt"
-  install -m 644 "$FULL_PKI_DIR/server_pub.pem" "$STAGE_DIR/client/pki/server_pub.pem"
-  install -m 644 "$FULL_PKI_DIR/firewall_pk_ristretto.bin" "$STAGE_DIR/client/pki/firewall_pk_ristretto.bin"
 
   log "PKI générée. ca.key est conservée ici, hors runtime: $CA_PRIVATE_DIR/ca.key"
 }
@@ -354,8 +330,6 @@ deploy_pki() {
   remote_install_pki_file "$client_target" "$STAGE_DIR/client/pki/ca.crt" "$CLIENT_APP_DIR/pki/ca.crt" 644
   remote_install_pki_file "$client_target" "$STAGE_DIR/client/pki/server.crt" "$CLIENT_APP_DIR/pki/server.crt" 644
   remote_install_pki_file "$client_target" "$STAGE_DIR/client/pki/firewall.crt" "$CLIENT_APP_DIR/pki/firewall.crt" 644
-  remote_install_pki_file "$client_target" "$STAGE_DIR/client/pki/server_pub.pem" "$CLIENT_APP_DIR/pki/server_pub.pem" 644
-  remote_install_pki_file "$client_target" "$STAGE_DIR/client/pki/firewall_pk_ristretto.bin" "$CLIENT_APP_DIR/pki/firewall_pk_ristretto.bin" 644
 
   log "Distribution PKI terminée"
 }
@@ -393,15 +367,34 @@ start_firewall() {
     > logs/firewall.log 2>&1 < /dev/null &
   echo $! > logs/firewall.pid
 
-  sleep 2
-  log "Log RF récent:"
-  tail -n 20 "$RF_APP_DIR/logs/firewall.log" || true
+  log "Attente de génération de pki/firewall_pk_ristretto.bin par le RF"
+  for _ in {1..40}; do
+    if [[ -s "$RF_APP_DIR/pki/firewall_pk_ristretto.bin" ]]; then
+      chmod 644 "$RF_APP_DIR/pki/firewall_pk_ristretto.bin"
+      log "firewall_pk_ristretto.bin généré"
+      return 0
+    fi
+    sleep 0.5
+  done
+
+  err "Le RF n'a pas généré firewall_pk_ristretto.bin. Dernières lignes du log:"
+  tail -n 80 "$RF_APP_DIR/logs/firewall.log" || true
+  exit 1
 }
 
+send_firewall_pk_to_client() {
+  local client_target="${CLIENT_USER}@${CLIENT_HOST}"
+  log "Envoi de firewall_pk_ristretto.bin vers Client"
+  remote_install_pki_file "$client_target" \
+    "$RF_APP_DIR/pki/firewall_pk_ristretto.bin" \
+    "$CLIENT_APP_DIR/pki/firewall_pk_ristretto.bin" \
+    644
+}
 
 run_demo() {
   start_server
   start_firewall
+  send_firewall_pk_to_client
 
   log "Déploiement runtime prêt"
   cat <<NEXT

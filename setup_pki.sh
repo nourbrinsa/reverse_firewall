@@ -50,7 +50,6 @@ openssl x509 -req \
   -days 365
 
 # Exporter la clé publique seule (distribuée au client et au firewall)
-openssl pkey -in "$PKI_DIR/server.key" -pubout -out "$PKI_DIR/server_pub.pem"
 
 # ---------------------------------------------------------------------------
 # 3. Certificat du Firewall
@@ -72,7 +71,6 @@ openssl x509 -req \
   -days 365
 
 # Exporter la clé publique seule (distribuée au client)
-openssl pkey -in "$PKI_DIR/firewall.key" -pubout -out "$PKI_DIR/firewall_pub.pem"
 
 # ---------------------------------------------------------------------------
 # 4. Vérification des chaînes
@@ -93,6 +91,7 @@ echo ""
 echo "Distribution des fichiers :"
 echo "  Serveur   ← pki/server.key  pki/server.crt  pki/ca.crt"
 echo "  Firewall  ← pki/firewall.key pki/firewall.crt pki/ca.crt"
-echo "  Client    ← pki/server_pub.pem pki/firewall_pub.pem pki/ca.crt"
+echo "  Client    ← pki/ca.crt pki/server.crt pki/firewall.crt"
+echo "              + pki/firewall_pk_ristretto.bin après démarrage du RF"
 echo ""
 echo "Variable d'environnement optionnelle : PKI_DIR=<chemin> ./setup_pki.sh"

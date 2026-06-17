@@ -151,32 +151,13 @@ fn read_ed25519_private_key(key_path: &Path) -> Result<[u8; 32], PkiError> {
     Ok(seed)
 }
 
-/// Lit un fichier PEM contenant une clé publique Ed25519 (SubjectPublicKeyInfo).
-/// Extrait directement les 32 bytes de la clé publique.
-fn read_ed25519_public_key(key_path: &Path) -> Result<[u8; 32], PkiError> {
-    let pem_bytes = fs::read(key_path)
-        .map_err(|e| pki_err!("lecture de la clé publique {} : {}", key_path.display(), e))?;
-
-    let mut cursor = Cursor::new(&pem_bytes);
-    let mut pub_keys = rustls_pemfile::public_keys(&mut cursor);
-    
-    let pub_key_der = match pub_keys.next() {
-        Some(Ok(key)) => key.as_ref().to_vec(),
-        Some(Err(e)) => return Err(pki_err!("décodage PEM échoue : {}", e)),
-        None => return Err(pki_err!("aucune clé publique trouvée dans {}", key_path.display())),
-    };
-
-    // Parser le DER SubjectPublicKeyInfo
-    // Format : SEQUENCE { AlgorithmIdentifier, BIT STRING (clé publique) }
-    // Pour Ed25519, la clé publique dans le BIT STRING est 32 bytes (le OID indique Ed25519)
-    // Pour simplifier, on extrait les 32 bytes depuis l'offset attendu du BIT STRING
-    
+/// Extrait les 32 bytes d'une clé publique Ed25519 encodée en SubjectPublicKeyInfo DER.
+fn parse_ed25519_public_key_der(pub_key_der: &[u8]) -> Result<[u8; 32], PkiError> {
     // SubjectPublicKeyInfo pour Ed25519 (44 bytes) :
-    //   30 2a              — SEQUENCE (42 bytes)
-    //   30 05 06 03 2b 65 70  — AlgorithmIdentifier + OID Ed25519
-    //   03 21 00           — BIT STRING (33 bytes : 1 byte padding + 32 bytes clé)
+    //   30 2a                  — SEQUENCE (42 bytes)
+    //   30 05 06 03 2b 65 70   — AlgorithmIdentifier + OID Ed25519
+    //   03 21 00               — BIT STRING (33 bytes : 1 byte padding + 32 bytes clé)
     //   <32 bytes clé publique>
-    
     if pub_key_der.len() < 44 {
         return Err(pki_err!(
             "clé publique Ed25519 trop courte : {} bytes (attendu au moins 44)",
@@ -184,10 +165,41 @@ fn read_ed25519_public_key(key_path: &Path) -> Result<[u8; 32], PkiError> {
         ));
     }
 
-    // La clé publique commence à l'offset 12 (après AlgorithmIdentifier et BIT STRING header)
     let mut pk = [0u8; 32];
     pk.copy_from_slice(&pub_key_der[12..44]);
     Ok(pk)
+}
+
+/// Extrait la clé publique Ed25519 directement depuis un certificat X.509.
+///
+/// Après validation de `server.crt` par `ca.crt`, le Client lit la clé publique
+/// qui se trouve déjà dans le certificat signé.
+fn read_ed25519_public_key_from_cert(cert_path: &Path) -> Result<[u8; 32], PkiError> {
+    let output = Command::new("openssl")
+        .args(["x509", "-in"])
+        .arg(cert_path)
+        .args(["-pubkey", "-noout"])
+        .output()
+        .map_err(|e| pki_err!("impossible d'extraire la clé publique depuis {} : {}", cert_path.display(), e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(pki_err!(
+            "extraction de la clé publique depuis {} échoue : {}",
+            cert_path.display(),
+            stderr.trim()
+        ));
+    }
+
+    let mut cursor = Cursor::new(output.stdout);
+    let mut pub_keys = rustls_pemfile::public_keys(&mut cursor);
+    let pub_key_der = match pub_keys.next() {
+        Some(Ok(key)) => key.as_ref().to_vec(),
+        Some(Err(e)) => return Err(pki_err!("décodage PEM de la clé du certificat échoue : {}", e)),
+        None => return Err(pki_err!("aucune clé publique trouvée dans {}", cert_path.display())),
+    };
+
+    parse_ed25519_public_key_der(&pub_key_der)
 }
 
 // ---------------------------------------------------------------------------
@@ -257,9 +269,10 @@ pub fn load_firewall_keys(pki_dir: &Path) -> Result<FirewallKeys, PkiError> {
 ///
 /// Fichiers requis :
 ///   - `pki_dir/ca.crt`          — certificat de la CA
-///   - `pki_dir/server.crt`      — certificat du serveur
+///   - `pki_dir/server.crt`      — certificat du serveur, utilisé aussi pour extraire pk_server
 ///   - `pki_dir/firewall.crt`    — certificat du firewall
-///   - `pki_dir/firewall_pk_ristretto.bin` — clé publique Ristretto du firewall
+///   - `pki_dir/firewall_pk_ristretto.bin` — clé publique Ristretto du firewall,
+///                                           copiée par le script de déploiement après démarrage du RF
 pub fn load_client_trust_bundle(pki_dir: &Path) -> Result<ClientTrustBundle, PkiError> {
     let ca_crt_path = pki_dir.join("ca.crt");
     let server_crt_path = pki_dir.join("server.crt");
@@ -274,13 +287,11 @@ pub fn load_client_trust_bundle(pki_dir: &Path) -> Result<ClientTrustBundle, Pki
     verify_cert(&ca_crt_path, &fw_crt_path)?;
     println!("[PKI] Certificats OK — signatures valides");
 
-    // 2. Extraire la clé publique Ed25519 du serveur depuis la clé privée
-    // (stockée dans firewall_pub.pem exportée par setup_pki.sh)
-    let server_pub_pem_path = pki_dir.join("server_pub.pem");
-    let server_pk_bytes = read_ed25519_public_key(&server_pub_pem_path)?;
+    // 2. Extraire pk_server directement depuis server.crt.
+    let server_pk_bytes = read_ed25519_public_key_from_cert(&server_crt_path)?;
     let pk_server = VerifyingKey::from_bytes(&server_pk_bytes)
         .map_err(|e| pki_err!("pk_server invalide : {}", e))?;
-    println!("[PKI] Clé publique serveur chargée (Ed25519)");
+    println!("[PKI] Clé publique serveur chargée depuis server.crt (Ed25519)");
 
     // 3. Charger la clé publique Ristretto du firewall depuis firewall_pk_ristretto.bin
     let pk_fw_path = pki_dir.join("firewall_pk_ristretto.bin");
@@ -321,31 +332,5 @@ pub fn publish_firewall_pk(pki_dir: &Path, pk_fw: &RistrettoPoint) -> Result<(),
     fs::write(&path, bytes)
         .map_err(|e| pki_err!("écriture firewall_pk_ristretto.bin : {}", e))?;
     println!("[PKI] pk_fw publié dans {}", path.display());
-    Ok(())
-}
-
-
-/// Exporte la clé publique Ristretto du Firewall pendant le provisioning PKI.
-///
-/// Cette fonction est appelée par le script de déploiement, avant le lancement
-/// des trois acteurs. Elle évite l'ancien mécanisme où le Firewall devait
-/// démarrer, publier `firewall_pk_ristretto.bin`, puis laisser le script copier
-/// ce fichier au Client pendant le runtime.
-///
-/// Entrées :
-///   - `firewall_key_path` : chemin vers `firewall.key` dans le dossier PKI complet
-///   - `output_path`       : chemin de sortie de `firewall_pk_ristretto.bin`
-pub fn export_firewall_pk_from_private_key(
-    firewall_key_path: &Path,
-    output_path: &Path,
-) -> Result<(), PkiError> {
-    let seed = read_ed25519_private_key(firewall_key_path)?;
-    let sk_fw = Scalar::from_bytes_mod_order(seed);
-    let pk_fw = crypto::base_point(&sk_fw);
-
-    fs::write(output_path, pk_fw.compress().to_bytes())
-        .map_err(|e| pki_err!("écriture {} : {}", output_path.display(), e))?;
-
-    println!("[PKI] firewall_pk_ristretto.bin exporté dans {}", output_path.display());
     Ok(())
 }

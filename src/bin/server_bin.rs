@@ -1,9 +1,10 @@
-//! Binaire Serveur : charge ses clés depuis la PKI au lieu de les générer.
+//! Binaire Serveur : charge ses clés depuis le dossier PKI déployé.
 //!
-//! Démarrage :
-//!   PKI_DIR=./pki SERVER_ADDR=0.0.0.0:9090 cargo run --bin server
+//! Démarrage distribué :
+//!   PKI_DIR=pki SERVER_ADDR=0.0.0.0:9090 cargo run --bin server_bin
 //!
-//! Prérequis : avoir exécuté le script de déploiement PKI depuis RF.
+//! La génération et la distribution des certificats sont faites par le script
+//! de déploiement. Le serveur ne génère jamais ses clés au runtime.
 
 use rand::rngs::OsRng;
 use std::net::TcpListener;
