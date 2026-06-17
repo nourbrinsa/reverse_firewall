@@ -323,3 +323,29 @@ pub fn publish_firewall_pk(pki_dir: &Path, pk_fw: &RistrettoPoint) -> Result<(),
     println!("[PKI] pk_fw publié dans {}", path.display());
     Ok(())
 }
+
+
+/// Exporte la clé publique Ristretto du Firewall pendant le provisioning PKI.
+///
+/// Cette fonction est appelée par le script de déploiement, avant le lancement
+/// des trois acteurs. Elle évite l'ancien mécanisme où le Firewall devait
+/// démarrer, publier `firewall_pk_ristretto.bin`, puis laisser le script copier
+/// ce fichier au Client pendant le runtime.
+///
+/// Entrées :
+///   - `firewall_key_path` : chemin vers `firewall.key` dans le dossier PKI complet
+///   - `output_path`       : chemin de sortie de `firewall_pk_ristretto.bin`
+pub fn export_firewall_pk_from_private_key(
+    firewall_key_path: &Path,
+    output_path: &Path,
+) -> Result<(), PkiError> {
+    let seed = read_ed25519_private_key(firewall_key_path)?;
+    let sk_fw = Scalar::from_bytes_mod_order(seed);
+    let pk_fw = crypto::base_point(&sk_fw);
+
+    fs::write(output_path, pk_fw.compress().to_bytes())
+        .map_err(|e| pki_err!("écriture {} : {}", output_path.display(), e))?;
+
+    println!("[PKI] firewall_pk_ristretto.bin exporté dans {}", output_path.display());
+    Ok(())
+}

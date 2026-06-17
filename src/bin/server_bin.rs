@@ -3,7 +3,7 @@
 //! Démarrage :
 //!   PKI_DIR=./pki SERVER_ADDR=0.0.0.0:9090 cargo run --bin server
 //!
-//! Prérequis : avoir exécuté setup_pki.sh au préalable.
+//! Prérequis : avoir exécuté le script de déploiement PKI depuis RF.
 
 use rand::rngs::OsRng;
 use std::net::TcpListener;
@@ -12,7 +12,7 @@ use reverse_firewall::{config, messages, net, server};
 
 fn main() -> std::io::Result<()> {
     let cfg = config::ServerConfig::from_env();
-    let pki_dir = PathBuf::from("pki");
+    let pki_dir = PathBuf::from(std::env::var("PKI_DIR").unwrap_or_else(|_| "pki".to_string()));
     let mut rng = OsRng;
 
     // ── Chargement des clés depuis la PKI (vérifie le certificat CA) ──────

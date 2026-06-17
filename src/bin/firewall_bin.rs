@@ -4,7 +4,7 @@
 //!   PKI_DIR=./pki FIREWALL_LISTEN=0.0.0.0:8080 FIREWALL_SERVER_ADDR=127.0.0.1:9090 \
 //!   cargo run --bin firewall
 //!
-//! Prérequis : setup_pki.sh exécuté, server déjà démarré.
+//! Prérequis : le script de déploiement PKI a déjà distribué le bundle RF.
 
 use rand::rngs::OsRng;
 use std::net::{TcpListener, TcpStream};
@@ -31,15 +31,15 @@ fn main() -> std::io::Result<()> {
     //   1. Vérifie firewall.crt auprès de ca.crt (openssl verify)
     //   2. Extrait sk_fw depuis firewall.key (seed Ed25519 → Scalar Ristretto)
     //   3. Calcule pk_fw = sk_fw · G
-    //   4. Publie pk_fw dans pki/firewall_pk_ristretto.bin
-    //      (fichier que le Client lira après avoir vérifié le certificat)
+    //   4. Ne publie plus pk_fw au runtime : firewall_pk_ristretto.bin est
+    //      généré pendant le provisioning et distribué au Client.
     println!("[Firewall] Chargement des clés PKI depuis {:?}...", pki_dir);
     let fw = firewall::Firewall::from_pki(&pki_dir, pk_server)
         .unwrap_or_else(|e| {
             eprintln!("[Firewall] Erreur PKI : {}", e);
             std::process::exit(1);
         });
-    println!("[Firewall] Clés chargées et pk_fw publiée");
+    println!("[Firewall] Clés chargées");
 
     // ── Étape 3 : Écoute du Client ─────────────────────────────────────────
     let listener = TcpListener::bind(&cfg.listen_addr)?;
@@ -52,8 +52,8 @@ fn main() -> std::io::Result<()> {
     // Le Client utilisera pk_fw et pk_server pour initialiser son état.
     // La confiance dans pk_server et pk_fw vient de la PKI :
     //   - pk_server : le Client vérifie server.crt via ca.crt
-    //   - pk_fw     : le Client lit firewall_pk_ristretto.bin après avoir
-    //                 vérifié firewall.crt via ca.crt
+    //   - pk_fw     : le Client lit firewall_pk_ristretto.bin distribué
+    //                 pendant le provisioning PKI
     net::send_msg(&mut client_stream, &messages::FirewallHello {
         pk_fw: fw.pk_fw,
         pk_server,

@@ -3,7 +3,7 @@
 //! Démarrage :
 //!   PKI_DIR=./pki CLIENT_ADDR=127.0.0.1:8080 cargo run --bin client
 //!
-//! Prérequis : setup_pki.sh exécuté, server et firewall déjà démarrés.
+//! Prérequis : le script de déploiement PKI a déjà distribué le bundle client.
 
 use rand::rngs::OsRng;
 use rand::RngCore;
@@ -22,14 +22,14 @@ fn main() -> std::io::Result<()> {
     //   1. Vérifie server.crt et firewall.crt auprès de ca.crt
     //   2. Extrait pk_server depuis server.crt
     //   3. Lit pk_fw depuis firewall_pk_ristretto.bin
-    //      (publié par le Firewall après vérification de son propre certificat)
+    //      (généré pendant le provisioning PKI puis distribué au Client)
     println!("[Client] Vérification des certificats PKI dans {:?}...", pki_dir);
     let trust = pki::load_client_trust_bundle(&pki_dir)
         .unwrap_or_else(|e| {
             eprintln!("[Client] Erreur PKI : {}", e);
             eprintln!("[Client] Assurez-vous que :");
-            eprintln!("  1. setup_pki.sh a été exécuté");
-            eprintln!("  2. Le Firewall a démarré (pour générer firewall_pk_ristretto.bin)");
+            eprintln!("  1. Le script de déploiement PKI a été exécuté depuis RF");
+            eprintln!("  2. ca.crt, server.crt, firewall.crt, server_pub.pem et firewall_pk_ristretto.bin existent dans PKI_DIR");
             std::process::exit(1);
         });
     println!("[Client] PKI OK — pk_server et pk_fw vérifiés par la CA");

@@ -3,6 +3,30 @@ name = "reverse_firewall"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "reverse_firewall"
+path = "lib.rs"
+
+[[bin]]
+name = "reverse_firewall"
+path = "main.rs"
+
+[[bin]]
+name = "server_bin"
+path = "bin/server_bin.rs"
+
+[[bin]]
+name = "firewall_bin"
+path = "bin/firewall_bin.rs"
+
+[[bin]]
+name = "client_bin"
+path = "bin/client_bin.rs"
+
+[[bin]]
+name = "pki_export_firewall_pk"
+path = "bin/pki_export_firewall_pk.rs"
+
 [dependencies]
 
 serde = { version = "1", features = ["derive"] }
