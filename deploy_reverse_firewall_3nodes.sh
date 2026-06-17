@@ -280,7 +280,7 @@ deploy_pki() {
   remote_install_pki_file "$client_target" "$STAGE_DIR/client/pki/server.crt" "$CLIENT_APP_DIR/pki/server.crt" 644
   remote_install_pki_file "$client_target" "$STAGE_DIR/client/pki/firewall.crt" "$CLIENT_APP_DIR/pki/firewall.crt" 644
   remote_install_pki_file "$client_target" "$STAGE_DIR/client/pki/server_pub.pem" "$CLIENT_APP_DIR/pki/server_pub.pem" 644
-  remote_install_pki_file "$client_target" "$STAGE_DIR/client/pki/server_pub.pem" "$CLIENT_APP_DIR/pki/firewall_pk_ristretto.bin" 644
+  remote_install_pki_file "$client_target" "$STAGE_DIR/client/pki/firewall_pk_ristretto.bin" "$CLIENT_APP_DIR/pki/firewall_pk_ristretto.bin" 644
 
   log "Distribution PKI terminée"
 }
