@@ -291,17 +291,28 @@ start_server() {
   log "Démarrage du serveur sur ${server_target}"
 
   ssh_base "$server_target" "
+    set -e
     cd '$SERVER_APP_DIR'
     mkdir -p logs
-    pkill -f 'cargo run --bin ${SERVER_BIN}' 2>/dev/null || true
-    nohup env PKI_DIR=pki SERVER_ADDR='${SERVER_BIND_ADDR}' cargo run --bin '${SERVER_BIN}' \
+
+    if [ -f logs/server.pid ]; then
+      kill \$(cat logs/server.pid) 2>/dev/null || true
+      rm -f logs/server.pid
+    fi
+
+    pkill -x '${SERVER_BIN}' 2>/dev/null || true
+
+    cargo build --bin '${SERVER_BIN}' > logs/server_build.log 2>&1
+
+    nohup env PKI_DIR=pki SERVER_ADDR='${SERVER_BIND_ADDR}' './target/debug/${SERVER_BIN}' \
       > logs/server.log 2>&1 < /dev/null &
+
     echo \$! > logs/server.pid
   "
 
   sleep 2
   log "Log serveur récent:"
-  ssh_base "$server_target" "tail -n 20 '$SERVER_APP_DIR/logs/server.log' || true"
+  ssh_base "$server_target" "tail -n 40 '$SERVER_APP_DIR/logs/server.log' || true"
 }
 
 start_firewall() {
@@ -309,13 +320,22 @@ start_firewall() {
 
   cd "$RF_APP_DIR"
   mkdir -p logs
-  pkill -f "cargo run --bin ${FIREWALL_BIN}" 2>/dev/null || true
+
+  if [ -f logs/firewall.pid ]; then
+    kill "$(cat logs/firewall.pid)" 2>/dev/null || true
+    rm -f logs/firewall.pid
+  fi
+
+  pkill -x "$FIREWALL_BIN" 2>/dev/null || true
+
+  cargo build --bin "$FIREWALL_BIN" > logs/firewall_build.log 2>&1
 
   nohup env PKI_DIR=pki \
     FIREWALL_LISTEN="$FIREWALL_BIND_ADDR" \
     FIREWALL_SERVER_ADDR="$FIREWALL_SERVER_ADDR" \
-    cargo run --bin "$FIREWALL_BIN" \
+    "./target/debug/$FIREWALL_BIN" \
     > logs/firewall.log 2>&1 < /dev/null &
+
   echo $! > logs/firewall.pid
 
   log "Attente de génération de pki/firewall_pk_ristretto.bin par le RF"

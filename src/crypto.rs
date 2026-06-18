@@ -17,7 +17,7 @@ pub fn random_scalar(rng: &mut impl RngCore) -> Scalar {
 }
 
 pub fn base_point(x: &Scalar) -> RistrettoPoint {
-    x * RISTRETTO_BASEPOINT_POINT
+    x * RISTRETTO_BASEPOINT_POINT   //x * G
 }
 
 // ---------------------------------------------------------------------------
