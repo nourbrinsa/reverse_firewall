@@ -285,72 +285,50 @@ deploy_pki() {
   log "Distribution PKI terminée"
 }
 
-# ----------------------------- Runtime ---------------------------------------
-start_server() {
-  local server_target="${SERVER_USER}@${SERVER_HOST}"
-  log "Démarrage du serveur sur ${server_target}"
+start_firewall() {
+    log "Démarrage du RF local"
 
-  ssh_base "$server_target" "
-    set -e
-    cd '$SERVER_APP_DIR'
+    cd "$RF_APP_DIR"
     mkdir -p logs
 
-    if [ -f logs/server.pid ]; then
-      kill \$(cat logs/server.pid) 2>/dev/null || true
-      rm -f logs/server.pid
+    if [ -f logs/firewall.pid ]; then
+        kill "$(cat logs/firewall.pid)" 2>/dev/null || true
+        rm -f logs/firewall.pid
     fi
 
-    pkill -x '${SERVER_BIN}' 2>/dev/null || true
+    pkill -x "$FIREWALL_BIN" 2>/dev/null || true
 
-    cargo build --bin '${SERVER_BIN}' > logs/server_build.log 2>&1
-
-    nohup env PKI_DIR=pki SERVER_ADDR='${SERVER_BIND_ADDR}' './target/debug/${SERVER_BIN}' \
-      > logs/server.log 2>&1 < /dev/null &
-
-    echo \$! > logs/server.pid
-  "
-
-  sleep 2
-  log "Log serveur récent:"
-  ssh_base "$server_target" "tail -n 40 '$SERVER_APP_DIR/logs/server.log' || true"
-}
-
-start_firewall() {
-  log "Démarrage du RF local"
-
-  cd "$RF_APP_DIR"
-  mkdir -p logs
-
-  if [ -f logs/firewall.pid ]; then
-    kill "$(cat logs/firewall.pid)" 2>/dev/null || true
-    rm -f logs/firewall.pid
-  fi
-
-  pkill -x "$FIREWALL_BIN" 2>/dev/null || true
-
-  cargo build --bin "$FIREWALL_BIN" > logs/firewall_build.log 2>&1
-
-  nohup env PKI_DIR=pki \
-    FIREWALL_LISTEN="$FIREWALL_BIND_ADDR" \
-    FIREWALL_SERVER_ADDR="$FIREWALL_SERVER_ADDR" \
-    "./target/debug/$FIREWALL_BIN" \
-    > logs/firewall.log 2>&1 < /dev/null &
-
-  echo $! > logs/firewall.pid
-
-  log "Attente de génération de pki/firewall_pk_ristretto.bin par le RF"
-  for _ in {1..40}; do
-    if [[ -s "$RF_APP_DIR/pki/firewall_pk_ristretto.bin" ]]; then
-      chmod 644 "$RF_APP_DIR/pki/firewall_pk_ristretto.bin"
-      log "firewall_pk_ristretto.bin généré"
-      return 0
+    # Build with output visible, not swallowed
+    log "Compilation du firewall..."
+    cargo build --bin "$FIREWALL_BIN" 2>&1 | tee logs/firewall_build.log
+    if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
+        err "Compilation du firewall échouée — voir logs/firewall_build.log"
+        exit 1
     fi
-    sleep 0.5
-  done
 
-  err "Le RF n'a pas généré firewall_pk_ristretto.bin. Dernières lignes du log:"
-  tail -n 80 "$RF_APP_DIR/logs/firewall.log" || true
-  exit 1
+    nohup env PKI_DIR=pki \
+        FIREWALL_LISTEN="$FIREWALL_BIND_ADDR" \
+        FIREWALL_SERVER_ADDR="$FIREWALL_SERVER_ADDR" \
+        "./target/debug/$FIREWALL_BIN" \
+        > logs/firewall.log 2>&1 < /dev/null &
+
+    echo $! > logs/firewall.pid
+    log "Firewall démarré (pid=$(cat logs/firewall.pid))"
+
+    log "Attente de génération de pki/firewall_pk_ristretto.bin..."
+    for _ in {1..40}; do
+        if [[ -s "$RF_APP_DIR/pki/firewall_pk_ristretto.bin" ]]; then
+            chmod 644 "$RF_APP_DIR/pki/firewall_pk_ristretto.bin"
+            log "firewall_pk_ristretto.bin généré OK"
+            return 0
+        fi
+        sleep 0.5
+    done
+
+    err "Le RF n'a pas généré firewall_pk_ristretto.bin après 20s"
+    err "Dernières lignes du log firewall:"
+    tail -n 40 "$RF_APP_DIR/logs/firewall.log" || true
+    exit 1
 }
 
 send_firewall_pk_to_client() {
@@ -384,34 +362,43 @@ send_firewall_pk_to_client() {
 }
 
 run_demo() {
-  start_server
-  start_firewall
-  send_firewall_pk_to_client
+    start_firewall
+    send_firewall_pk_to_client
 
-  log "Déploiement runtime prêt"
-  cat <<NEXT
+    log "Déploiement terminé"
+    cat <<NEXT
 
-À lancer sur la machine Client pour garder un terminal interactif :
+══════════════════════════════════════════════════════════
+ PKI distribuée. Démarrez maintenant manuellement :
+══════════════════════════════════════════════════════════
 
-  cd '$CLIENT_APP_DIR'
-  PKI_DIR=pki CLIENT_ADDR='$CLIENT_ADDR' cargo run --bin '$CLIENT_BIN'
+ 1. Sur la machine SERVEUR (${SERVER_USER}@${SERVER_HOST}) :
 
-Ou depuis cette machine RF, si vous voulez piloter le client via SSH :
+    cd '${SERVER_APP_DIR}'
+    PKI_DIR=pki SERVER_ADDR='${SERVER_BIND_ADDR}' cargo run --bin '${SERVER_BIN}'
 
-  ssh -p '$SSH_PORT' -i '$SSH_KEY' ${CLIENT_USER}@${CLIENT_HOST} "cd '$CLIENT_APP_DIR' && PKI_DIR=pki CLIENT_ADDR='$CLIENT_ADDR' cargo run --bin '$CLIENT_BIN'"
+ 2. Sur la machine CLIENT (${CLIENT_USER}@${CLIENT_HOST}) :
 
-Logs utiles :
-  Server : ssh -p '$SSH_PORT' -i '$SSH_KEY' ${SERVER_USER}@${SERVER_HOST} "tail -f '$SERVER_APP_DIR/logs/server.log'"
-  RF     : tail -f '$RF_APP_DIR/logs/firewall.log'
+    cd '${CLIENT_APP_DIR}'
+    PKI_DIR=pki CLIENT_ADDR='${CLIENT_ADDR}' cargo run --bin '${CLIENT_BIN}'
+
+══════════════════════════════════════════════════════════
+Logs firewall (cette machine) :
+  tail -f '${RF_APP_DIR}/logs/firewall.log'
+══════════════════════════════════════════════════════════
 NEXT
 }
 
 clean_runtime() {
-  local server_target="${SERVER_USER}@${SERVER_HOST}"
-  log "Arrêt des processus server/firewall lancés par cargo run"
-  ssh_base "$server_target" "pkill -f 'cargo run --bin ${SERVER_BIN}' 2>/dev/null || true"
-  pkill -f "cargo run --bin ${FIREWALL_BIN}" 2>/dev/null || true
-  log "Runtime nettoyé"
+    local server_target="${SERVER_USER}@${SERVER_HOST}"
+    log "Arrêt du firewall local"
+    if [ -f "$RF_APP_DIR/logs/firewall.pid" ]; then
+        kill "$(cat "$RF_APP_DIR/logs/firewall.pid")" 2>/dev/null || true
+        rm -f "$RF_APP_DIR/logs/firewall.pid"
+    fi
+    pkill -x "$FIREWALL_BIN" 2>/dev/null || true
+    log "Firewall arrêté"
+    log "Pour arrêter le serveur, allez sur ${SERVER_USER}@${SERVER_HOST} et arrêtez le processus manuellement"
 }
 
 # ------------------------------- Main ----------------------------------------
