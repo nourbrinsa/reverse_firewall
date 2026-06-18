@@ -29,29 +29,31 @@ require_cmd() {
 }
 
 require_var() {
-  local name="$1"
-  if [[ -z "${!name:-}" ]]; then
-    err "Variable manquante dans .env: $name"
-    exit 1
-  fi
+    local name="$1"
+    if [[ -z "${!name:-}" ]]; then
+        err "Variable manquante: $name"
+        err "Définissez-la dans .env ou via: export $name=valeur"
+        exit 1
+    else
+        log "$name=${!name}"
+    fi
 }
 
 load_env() {
-  if [[ ! -f "$ENV_FILE" ]]; then
-    err "Fichier .env introuvable: $ENV_FILE"
-    exit 1
-  fi
+  if [[ -f "$ENV_FILE" ]]; then
+      local env_mode
+      env_mode="$(stat -c '%a' "$ENV_FILE" 2>/dev/null || stat -f '%Lp' "$ENV_FILE" 2>/dev/null || true)"
+      if [[ -n "$env_mode" && "$env_mode" != "600" ]]; then
+          warn "$ENV_FILE a les permissions $env_mode. Recommandé: chmod 600 '$ENV_FILE'"
+      fi
 
-  # .env est un fichier local de confiance. On le source pour supporter les guillemets et $HOME.
-  set -a
-  # shellcheck source=/dev/null
-  source "$ENV_FILE"
-  set +a
-
-  local env_mode
-  env_mode="$(stat -c '%a' "$ENV_FILE" 2>/dev/null || stat -f '%Lp' "$ENV_FILE" 2>/dev/null || true)"
-  if [[ -n "$env_mode" && "$env_mode" != "600" ]]; then
-    warn "$ENV_FILE a les permissions $env_mode. Recommandé: chmod 600 '$ENV_FILE'"
+      set -a
+      # shellcheck source=/dev/null
+      source "$ENV_FILE"
+      set +a
+      log "Configuration chargée depuis: $ENV_FILE"
+  else
+      warn "Aucun fichier .env trouvé ($ENV_FILE) — utilisation des variables d'environnement existantes"
   fi
 }
 
@@ -245,7 +247,6 @@ generate_pki_once() {
   install -m 644 "$FULL_PKI_DIR/server.crt" "$STAGE_DIR/client/pki/server.crt"
   install -m 644 "$FULL_PKI_DIR/firewall.crt" "$STAGE_DIR/client/pki/firewall.crt"
   install -m 644 "$FULL_PKI_DIR/server_pub.pem" "$STAGE_DIR/client/pki/server_pub.pem"
-  install -m 644 "$FULL_PKI_DIR/server_pub.pem" "$STAGE_DIR/client/pki/firewall_pk_ristretto.bin"
 
   log "PKI générée. ca.key est conservée ici, hors runtime: $CA_PRIVATE_DIR/ca.key"
 }
@@ -280,7 +281,6 @@ deploy_pki() {
   remote_install_pki_file "$client_target" "$STAGE_DIR/client/pki/server.crt" "$CLIENT_APP_DIR/pki/server.crt" 644
   remote_install_pki_file "$client_target" "$STAGE_DIR/client/pki/firewall.crt" "$CLIENT_APP_DIR/pki/firewall.crt" 644
   remote_install_pki_file "$client_target" "$STAGE_DIR/client/pki/server_pub.pem" "$CLIENT_APP_DIR/pki/server_pub.pem" 644
-  remote_install_pki_file "$client_target" "$STAGE_DIR/client/pki/firewall_pk_ristretto.bin" "$CLIENT_APP_DIR/pki/firewall_pk_ristretto.bin" 644
 
   log "Distribution PKI terminée"
 }
@@ -334,12 +334,33 @@ start_firewall() {
 }
 
 send_firewall_pk_to_client() {
-  local client_target="${CLIENT_USER}@${CLIENT_HOST}"
-  log "Envoi de firewall_pk_ristretto.bin vers Client"
-  remote_install_pki_file "$client_target" \
-    "$RF_APP_DIR/pki/firewall_pk_ristretto.bin" \
-    "$CLIENT_APP_DIR/pki/firewall_pk_ristretto.bin" \
-    644
+    local client_target="${CLIENT_USER}@${CLIENT_HOST}"
+    local src="$RF_APP_DIR/pki/firewall_pk_ristretto.bin"
+
+    # 1. Verify source file is exactly 32 bytes before sending
+    local src_size
+    src_size=$(wc -c < "$src")
+    if [[ "$src_size" -ne 32 ]]; then
+        err "fichier source corrompu : $src_size bytes (attendu 32) — abandon"
+        exit 1
+    fi
+    log "fichier source OK : 32 bytes"
+
+    # 2. Send it
+    log "Envoi de firewall_pk_ristretto.bin vers Client"
+    remote_install_pki_file "$client_target" \
+        "$src" \
+        "$CLIENT_APP_DIR/pki/firewall_pk_ristretto.bin" \
+        644
+
+    # 3. Verify it landed correctly on the client
+    local remote_size
+    remote_size=$(ssh_base "$client_target" "wc -c < '$CLIENT_APP_DIR/pki/firewall_pk_ristretto.bin'")
+    if [[ "$remote_size" -ne 32 ]]; then
+        err "fichier corrompu sur le client : $remote_size bytes (attendu 32) — SCP a échoué"
+        exit 1
+    fi
+    log "firewall_pk_ristretto.bin vérifié sur le client : 32 bytes OK"
 }
 
 run_demo() {
